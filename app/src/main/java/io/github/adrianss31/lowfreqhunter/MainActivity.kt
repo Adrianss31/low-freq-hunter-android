@@ -19,8 +19,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.github.adrianss31.lowfreqhunter.ui.Lfh
+import android.graphics.drawable.ColorDrawable
+import android.view.RoundedCorner
 import io.github.adrianss31.lowfreqhunter.ui.LfhTheme
 import io.github.adrianss31.lowfreqhunter.ui.LiveScreen
 import io.github.adrianss31.lowfreqhunter.ui.NightScreen
@@ -55,11 +62,34 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Root() {
+    val view = LocalView.current
+    // Raggio di arrotondamento reale del display (Android 12+), fallback 28dp.
+    val radiusPx = with(androidx.compose.ui.platform.LocalContext.current) {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            val w = windowManager.currentWindowMetrics.windowInsets
+                .getRoundedCorner(android.view.WindowInsets.Type.systemBars())
+                ?.let { rc -> maxOf(rc.radiusTopLeft, rc.radiusTopRight, rc.radiusBottomLeft, rc.radiusBottomRight) }
+                ?: -1
+            if (w > 0) w.toFloat() else -1f
+        } else -1f
+    }
+    val radiusDp = with(LocalDensity.current) {
+        if (radiusPx > 0f) radiusPx.toDp() else 28.dp
+    }
+    // Lo sfondo della finestra = Bg: gli angoli fuori dal ritaglio si fondono.
+    androidx.compose.runtime.remember(view) {
+        view.post {
+            (view.context as? android.app.Activity)?.window?.setBackgroundDrawable(
+                ColorDrawable(Lfh.Bg.value.toInt())
+            )
+        }
+    }
     var tab by remember { mutableIntStateOf(1) } // parte su NOTTE
     Column(
         Modifier
             .fillMaxSize()
             .background(Lfh.Bg)
+            .clip(RoundedCornerShape(radiusDp))
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
