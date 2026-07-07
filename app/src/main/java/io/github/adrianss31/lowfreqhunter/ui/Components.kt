@@ -105,6 +105,7 @@ fun HwButton(
     modifier: Modifier = Modifier,
     color: Color = Lfh.Text,
     borderColor: Color = Lfh.Border,
+    bg: Color = Lfh.Surface,
     enabled: Boolean = true,
     heavy: Boolean = false,
     onClick: () -> Unit,
@@ -113,7 +114,7 @@ fun HwButton(
     Box(
         modifier
             .border(1.dp, if (enabled) borderColor else Lfh.Surface2)
-            .background(Lfh.Surface)
+            .background(bg)
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },

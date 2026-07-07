@@ -265,7 +265,7 @@ fun LiveScreen() {
                     b.id,
                     color = if (b.id == selBand) Lfh.Bg else Lfh.bandColor(b.id),
                     borderColor = Lfh.bandColor(b.id),
-                    modifier = if (b.id == selBand) Modifier.background(Lfh.bandColor(b.id)) else Modifier,
+                    bg = if (b.id == selBand) Lfh.bandColor(b.id) else Lfh.Surface,
                 ) {
                     selBand = b.id
                     peak = -120.0

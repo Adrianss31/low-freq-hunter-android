@@ -21,17 +21,10 @@ object Lfh {
     val Amber = Color(0xFFFFAA00)
 
     // colore banda per lettera (A, B, C, ... come nella PWA)
-    private val palette = listOf(
-        Color(0xFFFFAA00), Color(0xFF00D4AA), Color(0xFF9988FF), Color(0xFFFF6688),
-        Color(0xFF55AAFF), Color(0xFFAAEE44), Color(0xFFFF8844), Color(0xFF44DDEE),
-    )
+    fun bandColor(id: String): Color =
+        Color(io.github.adrianss31.lowfreqhunter.engine.Palette.bandColorInt(id))
 
-    fun bandColor(id: String): Color {
-        val i = (id.firstOrNull()?.code ?: 65) - 65
-        return palette[((i % palette.size) + palette.size) % palette.size]
-    }
-
-    val VibColor = Color(0xFFDDDDE4) // canale accelerometro "V"
+    val VibColor = Color(io.github.adrianss31.lowfreqhunter.engine.Palette.VIB) // canale "V"
 }
 
 private val ColorScheme = darkColorScheme(

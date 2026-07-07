@@ -150,6 +150,110 @@ object Render {
         }
     }
 
+    /**
+     * Timeline sessione (tema scuro): corsie evento per canale in alto,
+     * curve dei livelli sotto, soglie tratteggiate, gap grigi, marker bianchi.
+     */
+    fun DrawScope.drawTimelineDark(b: io.github.adrianss31.lowfreqhunter.data.SessionBundle) {
+        val w = size.width
+        val h = size.height
+        drawRect(Lfh.Bg, Offset.Zero, size)
+        if (b.samples.size < 2) return
+
+        val channels = b.channels
+        val laneH = 22f
+        val plotY0 = laneH * channels.size + 8f
+        val plotH = h - plotY0 - 30f
+        val tMin = b.samples.first().t
+        val tMax = b.samples.last().t
+        val span = maxOf(1L, tMax - tMin).toFloat()
+        val dbMin = -110.0
+        val dbMax = -10.0
+        fun xOf(t: Long) = (t - tMin) / span * w
+        fun yOf(db: Double) = (plotY0 + plotH - (db.coerceIn(dbMin, dbMax) - dbMin) / (dbMax - dbMin) * plotH).toFloat()
+        fun chColor(ch: String) = if (ch == io.github.adrianss31.lowfreqhunter.engine.Channels.VIB) Lfh.VibColor else Lfh.bandColor(ch)
+
+        // gap su tutta l'altezza
+        for (g in b.gaps) {
+            drawRect(
+                Color.White.copy(alpha = 0.08f),
+                Offset(xOf(g.startT), 0f),
+                Size(maxOf(xOf(g.endT) - xOf(g.startT), 2f), h),
+            )
+        }
+        // corsie evento
+        channels.forEachIndexed { i, ch ->
+            val y = i * laneH + 2f
+            drawRect(Color.White.copy(alpha = 0.04f), Offset(0f, y), Size(w, laneH - 4f))
+            label(ch, 4f, y + laneH - 8f, chColor(ch))
+            for (ev in b.events.filter { it.band == ch }) {
+                drawRect(
+                    chColor(ch),
+                    Offset(xOf(ev.startT), y),
+                    Size(maxOf(xOf(ev.endT) - xOf(ev.startT), 3f), laneH - 4f),
+                )
+            }
+        }
+        // griglia dB
+        var db = -100.0
+        while (db <= -20.0) {
+            drawLine(Lfh.Border.copy(alpha = 0.4f), Offset(0f, yOf(db)), Offset(w, yOf(db)))
+            label("${db.toInt()}", 4f, yOf(db) - 4f)
+            db += 20.0
+        }
+        // soglie tratteggiate
+        for (band in b.cfg.enabledBands()) {
+            val y = yOf(band.thr)
+            var x = 0f
+            while (x < w) {
+                drawLine(Lfh.bandColor(band.id).copy(alpha = 0.5f), Offset(x, y), Offset(minOf(x + 8f, w), y))
+                x += 16f
+            }
+        }
+        // curve
+        val stride = maxOf(1, b.samples.size / (w.toInt() * 2).coerceAtLeast(1))
+        fun plot(color: Color, width: Float, getter: (Int) -> Double?) {
+            val path = Path()
+            var started = false
+            var i = 0
+            while (i < b.samples.size) {
+                val v = getter(i)
+                if (v == null || !v.isFinite()) {
+                    started = false
+                } else {
+                    val px = xOf(b.samples[i].t)
+                    val py = yOf(v)
+                    if (started) path.lineTo(px, py) else path.moveTo(px, py)
+                    started = true
+                }
+                i += stride
+            }
+            drawPath(path, color, style = Stroke(width = width))
+        }
+        plot(Color.White.copy(alpha = 0.25f), 2f) { b.samples[it].ref }
+        for (band in b.cfg.enabledBands()) {
+            plot(Lfh.bandColor(band.id), 2.5f) { b.levels[it][band.id] }
+        }
+        if (b.cfg.vib.enabled) {
+            plot(Lfh.VibColor, 2.5f) { b.samples[it].vibDb }
+        }
+        // marker
+        for (m in b.markers) {
+            val x = xOf(m.t)
+            val path = Path()
+            path.moveTo(x, 0f)
+            path.lineTo(x - 7f, 14f)
+            path.lineTo(x + 7f, 14f)
+            path.close()
+            drawPath(path, Color.White)
+        }
+        // orari
+        for (i in 0..4) {
+            val t = tMin + ((tMax - tMin) * i / 4.0).toLong()
+            label(fmtClock(t * 1000), minOf(xOf(t) + 2f, w - 100f), h - 6f)
+        }
+    }
+
     /** Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna). */
     fun DrawScope.drawWaterfallColumns(
         columns: List<FloatArray>, // dB per bin, più recente in coda
