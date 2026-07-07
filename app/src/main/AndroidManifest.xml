@@ -30,5 +30,10 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".service.MonitorService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
     </application>
 </manifest>
