@@ -169,6 +169,32 @@ fun SettingsScreen() {
                 }
             }
             if (settings.schedule.enabled) {
+                var alarmRefresh by remember { mutableIntStateOf(0) }
+                val am = ctx.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+                val canExact = remember(alarmRefresh) {
+                    android.os.Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
+                }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        kotlinx.coroutines.delay(3000)
+                        alarmRefresh++
+                    }
+                }
+                if (!canExact) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CapsLabel("Serve il permesso \"sveglie esatte\"", Modifier.weight(1f), color = Lfh.Amber)
+                        HwButton("consenti") {
+                            runCatching {
+                                ctx.startActivity(
+                                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                                        .setData(Uri.parse("package:${ctx.packageName}"))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            }
+                        }
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                     CapsLabel("Inizio", Modifier.weight(1f))
