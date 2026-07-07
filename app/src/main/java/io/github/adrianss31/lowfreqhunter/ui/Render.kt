@@ -252,20 +252,25 @@ object Render {
             val t = tMin + ((tMax - tMin) * i / 4.0).toLong()
             label(fmtClock(t * 1000), minOf(xOf(t) + 2f, w - 100f), h - 6f)
         }
-    }
-
-    /** Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna). */
+    /**
+     * Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna).
+     * Le linee-frequenza (guides) NON sono disegnate dentro la waterfall (coprirebbero
+     * i dati): stanno in un asse a sinistra, fuori dall'area colorata.
+     */
     fun DrawScope.drawWaterfallColumns(
         columns: List<FloatArray>, // dB per bin, più recente in coda
         maxColumns: Int,
         guides: List<Pair<Double, Color>>,
+        axisW: Float = 46f, // larghezza asse frequenze a sinistra (fuori dal grafico)
     ) {
         val w = size.width
         val h = size.height
-        drawRect(Color.Black, Offset.Zero, size)
+        val plotW = (w - axisW).coerceAtLeast(1f)
+        // area grafico (a destra dell'asse)
+        drawRect(Color.Black, Offset(axisW, 0f), Size(plotW, h))
         if (columns.isNotEmpty()) {
             val nBins = columns[0].size
-            val colW = w / maxColumns
+            val colW = plotW / maxColumns
             val rowH = h / nBins
             val startX = w - columns.size * colW
             columns.forEachIndexed { xi, col ->
@@ -276,10 +281,17 @@ object Render {
                 }
             }
         }
+        // asse frequenze esterno: linee + etichette nella striscia a sinistra
         for ((hz, color) in guides) {
             val y = (h - (hz - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
             if (y < 0 || y > h) continue
-            drawLine(color.copy(alpha = 0.55f), Offset(0f, y), Offset(w, y), strokeWidth = 1.5f)
+            // linea orizzontale nell'asse (fuori dal grafico colorato)
+            drawLine(color.copy(alpha = 0.85f), Offset(0f, y), Offset(axisW, y), strokeWidth = 1.5f)
+            // breve tacca che entra nel grafico per ancorare visivamente la frequenza
+            drawLine(color.copy(alpha = 0.35f), Offset(axisW, y), Offset(axisW + 6f, y), strokeWidth = 1.5f)
+            // etichetta Hz (allineata a destra nell'asse)
+            val t = "${hz.toInt()}"
+            label(t, axisW - 6f - t.length * 13f, y - 4f, color)
         }
     }
 }
