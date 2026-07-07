@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+  KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Unit test
+        run: gradle testReleaseUnitTest
+
+      - name: Decodifica keystore
+        if: env.KEYSTORE_BASE64 != ''
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.p12"
+
+      - name: Build APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            export KEYSTORE_FILE="$RUNNER_TEMP/keystore.p12"
+            export KEY_ALIAS=lowfreqhunter
+            export KEY_PASSWORD="$KEYSTORE_PASSWORD"
+          fi
+          gradle assembleRelease
+
+      - name: Prepara APK
+        run: cp app/build/outputs/apk/release/app-release*.apk lowfreqhunter.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lowfreqhunter-apk
+          path: lowfreqhunter.apk
+
+      - name: Pubblica release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lowfreqhunter.apk
