@@ -11,7 +11,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.adrianss31.lowfreqhunter"
+        applicationId = "io.github.adrianss31.lowfreqhunter.exp"
         minSdk = 29
         targetSdk = 35
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
