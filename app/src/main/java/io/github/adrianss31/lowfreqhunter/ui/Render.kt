@@ -252,6 +252,8 @@ object Render {
             val t = tMin + ((tMax - tMin) * i / 4.0).toLong()
             label(fmtClock(t * 1000), minOf(xOf(t) + 2f, w - 100f), h - 6f)
         }
+    }
+
     /**
      * Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna).
      * Le linee-frequenza (guides) NON sono disegnate dentro la waterfall (coprirebbero
