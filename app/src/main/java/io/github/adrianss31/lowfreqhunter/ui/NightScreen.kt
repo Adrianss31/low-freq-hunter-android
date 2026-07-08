@@ -67,7 +67,9 @@ fun NightScreen() {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 DotValue(fmtClock(nowMs), color = Lfh.Text, size = 38)
-                if (bus.running) {
+                if (bus.running && bus.mode == "listen") {
+                    CapsLabel("SOLO ASCOLTO da ${fmtDur((nowMs - bus.startedAt) / 1000)} · non salvata", color = Lfh.Amber)
+                } else if (bus.running) {
                     CapsLabel("REC da ${fmtDur((nowMs - bus.startedAt) / 1000)} · ${bus.audioSource}", color = Lfh.Rec)
                 } else {
                     CapsLabel("log notturno", color = Lfh.TextFaint)
@@ -200,8 +202,10 @@ fun NightScreen() {
             }
         }
 
-        HwButton("▲ lo sento adesso (marker)", Modifier.fillMaxWidth(), color = Lfh.Amber, heavy = true) {
-            MonitorService.instance?.addMarker("button")
+        if (bus.mode == "rec") {
+            HwButton("▲ lo sento adesso (marker)", Modifier.fillMaxWidth(), color = Lfh.Amber, heavy = true) {
+                MonitorService.instance?.addMarker("button")
+            }
         }
 
         Box(

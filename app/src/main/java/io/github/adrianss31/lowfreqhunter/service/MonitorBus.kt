@@ -11,6 +11,7 @@ object MonitorBus {
 
     data class State(
         val running: Boolean = false,
+        val mode: String = "",            // "rec" (sessione salvata) | "listen" (solo ascolto)
         val sessionId: String? = null,
         val startedAt: Long = 0,
         val eventsCount: Int = 0,

@@ -47,6 +47,7 @@ class MonitorService : Service() {
 
     companion object {
         const val ACTION_START = "io.github.adrianss31.lowfreqhunter.START"
+        const val ACTION_START_LISTEN = "io.github.adrianss31.lowfreqhunter.START_LISTEN"
         const val ACTION_STOP = "io.github.adrianss31.lowfreqhunter.STOP"
         private const val CHANNEL_ID = "monitor"
         private const val NOTIF_ID = 1
@@ -57,6 +58,12 @@ class MonitorService : Service() {
 
         fun start(ctx: android.content.Context) {
             val i = Intent(ctx, MonitorService::class.java).setAction(ACTION_START)
+            ContextCompat.startForegroundService(ctx, i)
+        }
+
+        /** Solo ascolto (dal widget): motore attivo, nessuna sessione salvata. */
+        fun startListen(ctx: android.content.Context) {
+            val i = Intent(ctx, MonitorService::class.java).setAction(ACTION_START_LISTEN)
             ContextCompat.startForegroundService(ctx, i)
         }
 
@@ -74,6 +81,8 @@ class MonitorService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var cfg: EngineCfg = EngineCfg()
     private var running = false
+    private var listenMode = false
+    private var evCount = 0
     private var clipCount = 0
     private var clipWriter: ClipWriter? = null
 
@@ -81,15 +90,18 @@ class MonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startMonitoring()
+            ACTION_START -> startMonitoring(listenOnly = false)
+            ACTION_START_LISTEN -> startMonitoring(listenOnly = true)
             ACTION_STOP -> stopMonitoring()
         }
         return START_NOT_STICKY
     }
 
-    private fun startMonitoring() {
+    private fun startMonitoring(listenOnly: Boolean) {
         if (running) return
         running = true
+        listenMode = listenOnly
+        evCount = 0
         instance = this
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
@@ -112,30 +124,32 @@ class MonitorService : Service() {
         val dao = LfhDb.get(this).dao()
         val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
         capture = cap
-        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
+        val rec = if (listenOnly) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
         recorder = rec
 
         MonitorBus.resetSession()
         MonitorBus.state.value = MonitorBus.State(
             running = true,
-            sessionId = rec.sessionId,
-            startedAt = rec.startedAt,
+            mode = if (listenOnly) "listen" else "rec",
+            sessionId = rec?.sessionId,
+            startedAt = rec?.startedAt ?: System.currentTimeMillis(),
             audioSource = cap.sourceName,
         )
 
         val sink = object : NightEngine.Sink {
             override fun onSample(s: SampleData) {
-                rec.onSample(s)
+                rec?.onSample(s)
             }
 
             override fun onEvent(e: EventData) {
-                rec.onEvent(e)
+                if (e.band != Channels.GAP) evCount++
+                rec?.onEvent(e)
                 MonitorBus.events.value = MonitorBus.events.value + e
                 updateNotification()
             }
 
             override fun onSlice(t: Long, bins: ByteArray) {
-                rec.onSlice(t, bins)
+                rec?.onSlice(t, bins)
                 MonitorBus.slices.value = MonitorBus.slices.value + Pair(t, bins)
             }
 
@@ -172,6 +186,18 @@ class MonitorService : Service() {
                 delay(60_000)
             }
         }
+
+        // aggiornamento widget ~1 Hz (solo a schermo acceso)
+        scope.launch {
+            val pm2 = getSystemService(POWER_SERVICE) as PowerManager
+            io.github.adrianss31.lowfreqhunter.widget.WidgetUpdater.updateAll(this@MonitorService)
+            while (running) {
+                delay(1000)
+                if (pm2.isInteractive) {
+                    io.github.adrianss31.lowfreqhunter.widget.WidgetUpdater.updateAll(this@MonitorService)
+                }
+            }
+        }
     }
 
     /** Stato istantaneo per la UI (schermate Live e Notte). */
@@ -188,7 +214,7 @@ class MonitorService : Service() {
         val dom = Bands.dominantHz(spec, binHz, NightEngine.WF_FMIN, NightEngine.WF_FMAX)
         val prev = MonitorBus.state.value
         MonitorBus.state.value = prev.copy(
-            eventsCount = recorder?.eventsCount?.value ?: 0,
+            eventsCount = evCount,
             activeBands = active,
             levels = levels,
             vibDb = eng.vibDb,
@@ -240,11 +266,12 @@ class MonitorService : Service() {
         clipWriter?.let { runCatching { it.close() } }
         clipWriter = null
         recorder?.close()
-        MonitorBus.state.value = MonitorBus.state.value.copy(running = false, activeBands = emptyMap())
+        MonitorBus.state.value = MonitorBus.state.value.copy(running = false, mode = "", activeBands = emptyMap())
         wakeLock?.release()
         wakeLock = null
         instance = null
         scope.cancel()
+        io.github.adrianss31.lowfreqhunter.widget.WidgetUpdater.updateAll(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -296,9 +323,10 @@ class MonitorService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val startedAt = MonitorBus.state.value.startedAt.takeIf { it > 0 } ?: System.currentTimeMillis()
+        val modeLabel = if (listenMode) "LIVE (solo ascolto)" else "REC"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("REC · Low-Freq Hunter · dalle ${fmtClockShort(startedAt)}")
+            .setContentTitle("$modeLabel · Low-Freq Hunter · dalle ${fmtClockShort(startedAt)}")
             .setContentText(text.lineSequence().first())
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)

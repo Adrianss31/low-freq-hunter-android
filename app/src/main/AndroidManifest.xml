@@ -48,6 +48,23 @@
             android:name=".schedule.AlarmReceiver"
             android:exported="false" />
 
+        <activity
+            android:name=".widget.WidgetToggleActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <receiver
+            android:name=".widget.LfhWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lfh_info" />
+        </receiver>
+
         <receiver
             android:name=".schedule.BootReceiver"
             android:exported="false">

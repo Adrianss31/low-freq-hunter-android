@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Low-Freq Hunter</string>
+    <string name="widget_desc">VU meter per banda con tasto di ascolto rapido</string>
 </resources>
