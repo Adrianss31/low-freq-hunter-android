@@ -138,7 +138,10 @@ class MonitorService : Service() {
 
         // Scope pulito: se il precedente è stato cancellato da stopMonitoring()
         // (stesso processo), ricreane uno attivo per le nuove coroutine.
-        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val prevJob = scope.coroutineContext[Job]
+        if (prevJob == null || !prevJob.isActive) {
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        }
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
         cfg = settings.engine
