@@ -3,6 +3,7 @@ package io.github.adrianss31.lowfreqhunter
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.drawable.ColorDrawable
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.RoundedCorner
