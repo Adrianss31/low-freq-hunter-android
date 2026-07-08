@@ -32,6 +32,7 @@ import io.github.adrianss31.lowfreqhunter.ui.fmtClockShort
 import io.github.adrianss31.lowfreqhunter.ui.fmtDur
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -86,7 +87,8 @@ class MonitorService : Service() {
         }
     }
 
-    private var scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var scopeJob: Job = SupervisorJob()
+    private var scope: CoroutineScope = CoroutineScope(scopeJob + Dispatchers.Default)
     private var capture: CaptureEngine? = null
     private var engine: NightEngine? = null
     private var recorder: SessionRecorder? = null
@@ -138,9 +140,9 @@ class MonitorService : Service() {
 
         // Scope pulito: se il precedente è stato cancellato da stopMonitoring()
         // (stesso processo), ricreane uno attivo per le nuove coroutine.
-        val prevJob = scope.coroutineContext[Job]
-        if (prevJob == null || !prevJob.isActive) {
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        if (!scopeJob.isActive) {
+            scopeJob = SupervisorJob()
+            scope = CoroutineScope(scopeJob + Dispatchers.Default)
         }
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
