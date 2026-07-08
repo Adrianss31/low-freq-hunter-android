@@ -12,6 +12,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.github.adrianss31.lowfreqhunter.MainActivity
@@ -42,6 +43,14 @@ import java.io.File
 /**
  * Foreground service del log notturno: cattura, analizza e salva anche a
  * schermo spento, con notifica persistente informativa.
+ *
+ * Stabilità (branch hf-stability-watchdog):
+ *  - START_STICKY + riavvio automatico se il processo viene ammazzato dal
+ *    sistema (altrimenti la sessione restava "aperta" e veniva solo recuperata
+ *    in app, perdendo i dati dall'ora del kill in poi).
+ *  - Watchdog sulla cattura: se non arrivano spettri per N ms il microfono è
+ *    morto in silenzio (Deep Doze / AudioRecord ERROR) e la cattura viene
+ *    riavviata senza chiudere la sessione (registra solo un GAP nel motore).
  */
 class MonitorService : Service() {
 
@@ -50,10 +59,21 @@ class MonitorService : Service() {
         const val ACTION_STOP = "io.github.adrianss31.lowfreqhunter.STOP"
         private const val CHANNEL_ID = "monitor"
         private const val NOTIF_ID = 1
+        private const val TAG = "MonitorService"
+
+        /** Se non arrivano spettri per questo tempo, la cattura è considerata morta. */
+        private const val WATCHDOG_TIMEOUT_MS = 15_000L
+
+        /** Gap minimo tra riavvii automatici: evita loop se il microfono non si riapre. */
+        private const val AUTO_RESTART_MIN_GAP_MS = 30_000L
 
         @Volatile
         var instance: MonitorService? = null
             private set
+
+        /** Epoch ms dell'ultimo tentativo di riavvio automatico (anti-loop). */
+        @Volatile
+        private var lastAutoRestartMs = 0L
 
         fun start(ctx: android.content.Context) {
             val i = Intent(ctx, MonitorService::class.java).setAction(ACTION_START)
@@ -66,7 +86,7 @@ class MonitorService : Service() {
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var capture: CaptureEngine? = null
     private var engine: NightEngine? = null
     private var recorder: SessionRecorder? = null
@@ -77,20 +97,48 @@ class MonitorService : Service() {
     private var clipCount = 0
     private var clipWriter: ClipWriter? = null
 
+    /** Epoch ms dell'ultimo spettro ricevuto (usato dal watchdog). */
+    @Volatile
+    private var lastSpectrumMs = 0L
+
+    /** Nota transitoria mostrata nella notifica durante un recupero. */
+    @Volatile
+    private var recoveryNote: String? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startMonitoring()
             ACTION_STOP -> stopMonitoring()
+            null -> {
+                // Processo ricreato dal sistema (START_STICKY dopo un kill): riprendi
+                // il monitoraggio se eravamo attivi, ma evita un loop se il microfono
+                // non si riapre subito (es. un'altra app lo trattiene).
+                if (!running) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastAutoRestartMs >= AUTO_RESTART_MIN_GAP_MS) {
+                        lastAutoRestartMs = now
+                        Log.w(TAG, "Riavvio automatico dopo kill di sistema")
+                        startMonitoring()
+                    } else {
+                        Log.w(TAG, "Rinuncia a riavvio automatico (troppo frequente)")
+                        stopSelf()
+                    }
+                }
+            }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startMonitoring() {
         if (running) return
         running = true
         instance = this
+
+        // Scope pulito: se il precedente è stato cancellato da stopMonitoring()
+        // (stesso processo), ricreane uno attivo per le nuove coroutine.
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
         cfg = settings.engine
@@ -107,6 +155,7 @@ class MonitorService : Service() {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "lfh:monitor").also {
             it.setReferenceCounted(false)
             it.acquire(12 * 60 * 60 * 1000L) // massimo 12 h di sessione
+            Log.i(TAG, "WakeLock acquisito (max 12h)")
         }
 
         val dao = LfhDb.get(this).dao()
@@ -150,11 +199,14 @@ class MonitorService : Service() {
         eng.batteryPct = readBattery()
         eng.start(System.currentTimeMillis())
 
+        lastSpectrumMs = System.currentTimeMillis()
         val started = cap.start(scope) { spec, binHz, nowMs ->
+            lastSpectrumMs = nowMs
             eng.processSpectrum(spec, binHz, nowMs)
             publishLive(spec, binHz, nowMs, eng)
         }
         if (!started) {
+            Log.e(TAG, "Cattura non avviata (microfono non disponibile)")
             stopMonitoring()
             return
         }
@@ -170,6 +222,25 @@ class MonitorService : Service() {
                 eng.batteryPct = readBattery()
                 updateNotification()
                 delay(60_000)
+            }
+        }
+
+        // Watchdog: se non arrivano spettri per WATCHDOG_TIMEOUT_MS, il microfono
+        // è morto in silenzio (Deep Doze / AudioRecord ERROR_DEAD_OBJECT) — riavvia
+        // la cattura senza fermare la sessione (il motore registra solo un GAP).
+        scope.launch {
+            while (running) {
+                delay(5_000)
+                if (!running) break
+                val stale = System.currentTimeMillis() - lastSpectrumMs
+                if (lastSpectrumMs != 0L && stale > WATCHDOG_TIMEOUT_MS) {
+                    Log.w(TAG, "Watchdog: nessuno spettro da ${stale}ms, riavvio cattura")
+                    recoveryNote = "Recupero microfono…"
+                    updateNotification()
+                    restartCapture(eng)
+                    recoveryNote = null
+                    updateNotification()
+                }
             }
         }
     }
@@ -249,6 +320,26 @@ class MonitorService : Service() {
         stopSelf()
     }
 
+    /** Riavvia solo la cattura audio conservando sessione e motore (fix watchdog). */
+    private fun restartCapture(eng: NightEngine) {
+        val old = capture
+        capture = null
+        runCatching { old?.stop() }
+        val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
+        capture = cap
+        lastSpectrumMs = System.currentTimeMillis()
+        val started = cap.start(scope) { spec, binHz, nowMs ->
+            lastSpectrumMs = nowMs
+            eng.processSpectrum(spec, binHz, nowMs)
+            publishLive(spec, binHz, nowMs, eng)
+        }
+        if (!started) {
+            Log.e(TAG, "restartCapture fallito: microfono non disponibile dopo riavvio")
+        } else {
+            Log.i(TAG, "Cattura riavviata con successo")
+        }
+    }
+
     override fun onDestroy() {
         if (running) stopMonitoring()
         super.onDestroy()
@@ -269,6 +360,7 @@ class MonitorService : Service() {
     private fun notificationText(): String {
         val st = MonitorBus.state.value
         val lines = StringBuilder()
+        recoveryNote?.let { lines.append("$it\n") }
         val evs = MonitorBus.events.value.filter { it.band != Channels.GAP }
         if (evs.isEmpty()) {
             lines.append("Nessun evento sopra soglia.")
