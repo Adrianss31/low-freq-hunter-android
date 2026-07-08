@@ -38,8 +38,13 @@ import io.github.adrianss31.lowfreqhunter.ui.NightScreen
 import io.github.adrianss31.lowfreqhunter.ui.SettingsScreen
 import io.github.adrianss31.lowfreqhunter.ui.SummaryScreen
 import io.github.adrianss31.lowfreqhunter.ui.TabBar
+import io.github.adrianss31.lowfreqhunter.widget.LiveWidgetController
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        const val ACTION_WIDGET_LIVE_TOGGLE = "io.github.adrianss31.lowfreqhunter.WIDGET_LIVE_TOGGLE"
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -47,10 +52,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNeededPermissions()
+        handleToggleIntent(intent)
         setContent {
             LfhTheme {
                 Root()
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleToggleIntent(intent)
+    }
+
+    /** Tap sul disco del widget: avvia/ferma il Live (qui l'app è in primo piano). */
+    private fun handleToggleIntent(intent: Intent?) {
+        if (intent?.action == ACTION_WIDGET_LIVE_TOGGLE) {
+            LiveWidgetController.toggle(this)
         }
     }
 

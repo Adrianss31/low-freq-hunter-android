@@ -49,6 +49,18 @@
             android:exported="false" />
 
         <receiver
+            android:name=".widget.LiveWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="io.github.adrianss31.lowfreqhunter.WIDGET_REFRESH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/live_widget_info" />
+        </receiver>
+
+        <receiver
             android:name=".schedule.BootReceiver"
             android:exported="false">
             <intent-filter>

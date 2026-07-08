@@ -37,6 +37,7 @@ import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.dsp.Bands
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
+import io.github.adrianss31.lowfreqhunter.widget.LiveWidgetController
 import io.github.adrianss31.lowfreqhunter.ui.Render.drawSpectrum
 import io.github.adrianss31.lowfreqhunter.ui.Render.drawWaterfallColumns
 import kotlinx.coroutines.delay
@@ -86,8 +87,9 @@ fun LiveScreen() {
     var geiger by remember { mutableStateOf(false) }
 
     val serviceRunning = bus.running
+    val widgetLive = LiveWidgetController.isLive()
     val localRunning = capture != null
-    val running = serviceRunning || localRunning
+    val running = serviceRunning || localRunning || widgetLive
 
     fun onFrame(f: MonitorBus.SpectrumFrame) {
         if (frozen) return
@@ -106,7 +108,7 @@ fun LiveScreen() {
     }
 
     fun startLocal() {
-        if (capture != null || serviceRunning) return
+        if (capture != null || serviceRunning || widgetLive) return
         val cap = CaptureEngine(ctx, settings.engine.fftSize, settings.engine.smoothLive)
         val ok = cap.start(scope) { spec, binHz, now ->
             val maxBins = minOf(spec.size, (2000.0 / binHz).toInt())
@@ -277,6 +279,8 @@ fun LiveScreen() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (serviceRunning) {
                 CapsLabel("Il microfono è del log notturno in corso", Modifier.padding(top = 12.dp), color = Lfh.Amber)
+            } else if (widgetLive) {
+                CapsLabel("Live attivo dal widget · tap disco per fermare", Modifier.padding(top = 12.dp), color = Lfh.Amber)
             } else {
                 HwButton(
                     if (localRunning) "⬛ stop" else "▶ avvia",
@@ -307,8 +311,8 @@ fun LiveScreen() {
         }
 
         CapsLabel(
-            "Sorgente: ${if (serviceRunning) bus.audioSource else capture?.sourceName ?: "—"} · livelli dBFS non calibrati in dB SPL",
-            color = Lfh.TextFaint,
+        "Sorgente: ${if (serviceRunning) bus.audioSource else if (widgetLive) LiveWidgetController.state.value.source else capture?.sourceName ?: "—"} · livelli dBFS non calibrati in dB SPL",
+        color = Lfh.TextFaint,
         )
     }
 }
