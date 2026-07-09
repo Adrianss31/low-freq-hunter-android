@@ -8,9 +8,10 @@ import org.junit.Test
 class IdwTest {
 
     @Test
-    fun duePuntiGradienteMonotono() {
-        // -80 dB a sinistra, -40 dB a destra: lungo la mezzeria il valore
-        // deve crescere in modo monotono da sinistra a destra
+    fun duePuntiGradienteMonotonoTraIPunti() {
+        // -80 dB a sinistra (x=0.1), -40 dB a destra (x=0.9): TRA i due punti
+        // il valore cresce in modo monotono. (Fuori dai punti l'IDW ha
+        // correttamente un estremo locale sul punto misurato.)
         val pts = listOf(
             Idw.Point(0.1f, 0.5f, -80.0),
             Idw.Point(0.9f, 0.5f, -40.0),
@@ -19,15 +20,16 @@ class IdwTest {
         val gh = 10
         val g = Idw.grid(pts, gw, gh)
         val midRow = (gh / 2) * gw
-        for (x in 1 until gw) {
+        // celle con centro dentro (0.1, 0.9): gx = 2..17
+        for (x in 3..17) {
             assertTrue(
                 "non monotono a x=$x: ${g[midRow + x - 1]} -> ${g[midRow + x]}",
                 g[midRow + x] >= g[midRow + x - 1] - 1e-9,
             )
         }
         // vicino ai punti il valore si avvicina a quello misurato
-        assertTrue(g[midRow + 1] < -70.0)
-        assertTrue(g[midRow + gw - 2] > -50.0)
+        assertTrue("sx=${g[midRow + 2]}", g[midRow + 2] < -70.0)
+        assertTrue("dx=${g[midRow + 17]}", g[midRow + 17] > -50.0)
     }
 
     @Test
