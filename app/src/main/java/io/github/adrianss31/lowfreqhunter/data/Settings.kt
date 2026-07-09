@@ -25,6 +25,7 @@ data class AppSettings(
     val specXMax: Int = 250,       // asse X spettro live (Hz)
     val sonify: Boolean = false,
     val schedule: ScheduleCfg = ScheduleCfg(),
+    val eventsViewPerBand: Boolean = true,  // default: vista per-banda (aggregata)
 )
 
 private val Context.dataStore by preferencesDataStore(name = "lfh-settings")

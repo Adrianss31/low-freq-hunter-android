@@ -36,8 +36,11 @@ import androidx.compose.ui.unit.sp
 import io.github.adrianss31.lowfreqhunter.data.Exporter
 import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
+import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
+import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.deleteSessionData
 import io.github.adrianss31.lowfreqhunter.engine.Channels
+import io.github.adrianss31.lowfreqhunter.engine.EngineCfg
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.ui.Render.drawTimelineDark
 import io.github.adrianss31.lowfreqhunter.ui.Render.drawWaterfallSlices
@@ -50,12 +53,22 @@ import java.io.File
 fun SummaryScreen() {
     val ctx = LocalContext.current
     val dao = remember { LfhDb.get(ctx).dao() }
+    val repo = remember { SettingsRepo.get(ctx) }
+    val settings by repo.flow.collectAsState(initial = AppSettings())
     val sessions by dao.sessionsFlow().collectAsState(initial = emptyList())
     val bus by MonitorBus.state.collectAsState()
     var selected by remember { mutableStateOf<String?>(null) }
     var bundle by remember { mutableStateOf<SessionBundle?>(null) }
     val scope = rememberCoroutineScope()
     val view = LocalView.current
+    
+    // Toggle per vista eventi: per-evento (flat) vs per-banda (aggregato)
+    var eventsViewPerBand by remember { mutableStateOf(settings.eventsViewPerBand) }
+    
+    // Sync with settings
+    LaunchedEffect(settings.eventsViewPerBand) {
+        eventsViewPerBand = settings.eventsViewPerBand
+    }
 
     LaunchedEffect(selected) {
         bundle = selected?.let { withContext(Dispatchers.IO) { SessionBundle.load(dao, it) } }
@@ -175,43 +188,27 @@ fun SummaryScreen() {
 
         // eventi
         Panel(Modifier.fillMaxWidth()) {
-            CapsLabel("Eventi")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CapsLabel("Eventi")
+                HwSwitch(eventsViewPerBand) { 
+                    eventsViewPerBand = !eventsViewPerBand
+                    // Salva preferenza
+                    scope.launch { repo.update { it.copy(eventsViewPerBand = eventsViewPerBand) } }
+                }
+                CapsLabel(if (eventsViewPerBand) "per banda" else "per evento", color = Lfh.TextDim)
+            }
             Spacer(Modifier.height(6.dp))
             if (b.events.isEmpty() && b.gaps.isEmpty()) {
                 Text("Nessun evento sopra soglia.", color = Lfh.TextDim, fontSize = 12.sp)
-            }
-            var n = 0
-            for (ev in (b.events + b.gaps).sortedBy { it.startT }) {
-                if (ev.band == Channels.GAP) {
-                    Text(
-                        "—  ${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}  gap",
-                        color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
-                        modifier = Modifier.padding(vertical = 3.dp),
-                    )
-                } else {
-                    n++
-                    Row(Modifier.padding(vertical = 3.dp)) {
-                        Text(
-                            "%2d".format(n), color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
-                            modifier = Modifier.width(26.dp),
-                        )
-                        Text(
-                            ev.band,
-                            color = if (ev.band == Channels.VIB) Lfh.VibColor else Lfh.bandColor(ev.band),
-                            fontSize = 12.sp, fontFamily = MonoFont,
-                            modifier = Modifier.width(22.dp),
-                        )
-                        Text(
-                            "${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}",
-                            color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            ev.peakDb?.let { "%.1f".format(it) } ?: "—",
-                            color = Lfh.TextDim, fontSize = 12.sp, fontFamily = MonoFont,
-                        )
-                    }
-                }
+            } else if (eventsViewPerBand) {
+                // Vista per-banda: 1 riga per banda con attivazioni aggregate
+                BandEventsView(b = b)
+            } else {
+                // Vista per-evento: elenco piatto cronologico (originale)
+                FlatEventsView(b = b)
             }
         }
 
@@ -303,6 +300,12 @@ fun SummaryScreen() {
                     export("${Exporter.baseName(b)}_campioni.csv", "text/csv") { Exporter.samplesCsv(b).toByteArray() }
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HwButton("csv bande", Modifier.weight(1f)) {
+                    export("${Exporter.baseName(b)}_bande.csv", "text/csv") { Exporter.bandsSummaryCsv(b).toByteArray() }
+                }
+            }
         }
 
         HwButton("🗑 elimina sessione", Modifier.fillMaxWidth(), color = Lfh.Rec) { confirmDelete = true }
@@ -337,5 +340,136 @@ private fun StatRow(label: String, value: String, valueColor: androidx.compose.u
     Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         CapsLabel(label, Modifier.weight(1f))
         Text(value, color = valueColor, fontSize = 13.sp, fontFamily = MonoFont)
+    }
+}
+
+/** Vista eventi aggregata per banda: 1 riga per banda con tutte le attivazioni */
+@Composable
+private fun BandEventsView(b: SessionBundle) {
+    val enabledBands = b.cfg.enabledBands()
+    val eventsByBand = b.events.groupBy { it.band }
+    
+    for (bandCfg in enabledBands) {
+        val bandEvents = eventsByBand[bandCfg.id] ?: emptyList()
+        if (bandEvents.isEmpty()) continue
+        
+        val totalDuration = bandEvents.sumOf { it.durationS }
+        val eventCount = bandEvents.size
+        val peakDb = bandEvents.mapNotNull { it.peakDb }.maxOrNull()
+        val avgDb = bandEvents.mapNotNull { it.avgDb }.average().let { if (it.isNaN()) null else it }
+        
+        // Frequenza come etichetta principale
+        val freqLabel = bandCfg.freqShort
+        val color = if (bandCfg.id == Channels.VIB) Lfh.VibColor else Lfh.bandColor(bandCfg.id)
+        
+        Panel(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+            // Solo.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Indicatore colore + etichetta frequenza
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .background(color)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    freqLabel,
+                    color = color,
+                    fontSize = 13.sp,
+                    fontFamily = MonoFont,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Spacer(Modifier.width(8.dp))
+                CapsLabel("${eventCount} attivazioni", color = Lfh.TextDim)
+                Spacer(Modifier.width(8.dp))
+                CapsLabel(fmtDur(totalDuration), color = Lfh.TextDim)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    peakDb?.let { "%.1f dBFS".format(it) } ?: "—",
+                    color = Lfh.TextDim,
+                    fontSize = 12.sp,
+                    fontFamily = MonoFont
+                )
+            }
+            
+            // Elenco orari attivazioni (inline, scorrevole se tante)
+            if (bandEvents.size <= 5) {
+                for (ev in bandEvents.sortedBy { it.startT }) {
+                    Text(
+                        "  ${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}  ${ev.peakDb?.let { "%.1f".format(it) } ?: "—"} dBFS",
+                        color = Lfh.TextFaint,
+                        fontSize = 11.sp,
+                        fontFamily = MonoFont,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 1.dp, start = 24.dp)
+                    )
+                }
+            } else {
+                // Mostra prima e ultima + contatore
+                val first = bandEvents.minByOrNull { it.startT }!!
+                val last = bandEvents.maxByOrNull { it.startT }!!
+                Text(
+                    "  ${fmtClock(first.startT * 1000)}–${fmtClock(last.endT * 1000)}  (${bandEvents.size} attivazioni, ${fmtDur(totalDuration)} totali)  picco: ${peakDb?.let { "%.1f".format(it) } ?: "—"} dBFS",
+                    color = Lfh.TextFaint,
+                    fontSize = 11.sp,
+                    fontFamily = MonoFont,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 1.dp, start = 24.dp)
+                )
+            }
+        }
+    }
+    
+    // Gap
+    if (b.gaps.isNotEmpty()) {
+        CapsLabel("Gap monitoraggio", color = Lfh.Amber)
+        Spacer(Modifier.height(4.dp))
+        for (gap in b.gaps.sortedBy { it.startT }) {
+            Text(
+                "—  ${fmtClock(gap.startT * 1000)}–${fmtClock(gap.endT * 1000)}  ${fmtDur(gap.durationS)}  gap",
+                color = Lfh.TextFaint,
+                fontSize = 12.sp,
+                fontFamily = MonoFont,
+                modifier = Modifier.padding(vertical = 3.dp)
+            )
+        }
+    }
+}
+
+/** Vista eventi piatta originale (per-evento cronologico) */
+@Composable
+private fun FlatEventsView(b: SessionBundle) {
+    var n = 0
+    for (ev in (b.events + b.gaps).sortedBy { it.startT }) {
+        if (ev.band == Channels.GAP) {
+            Text(
+                "—  ${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}  gap",
+                color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
+                modifier = Modifier.padding(vertical = 3.dp),
+            )
+        } else {
+            n++
+            Row(Modifier.padding(vertical = 3.dp)) {
+                Text(
+                    "%2d".format(n), color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
+                    modifier = Modifier.width(26.dp),
+                )
+                Text(
+                    // Mostra frequenza invece di lettera
+                    b.cfg.band(ev.band)?.freqShort ?: ev.band,
+                    color = if (ev.band == Channels.VIB) Lfh.VibColor else Lfh.bandColor(ev.band),
+                    fontSize = 12.sp, fontFamily = MonoFont,
+                    modifier = Modifier.width(50.dp), // più spazio per "50 Hz"
+                )
+                Text(
+                    "${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}",
+                    color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    ev.peakDb?.let { "%.1f".format(it) } ?: "—",
+                    color = Lfh.TextDim, fontSize = 12.sp, fontFamily = MonoFont,
+                )
+            }
+        }
     }
 }

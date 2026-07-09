@@ -13,7 +13,12 @@ data class BandCfg(
 ) {
     val lo: Double get() = maxOf(1.0, center - width)
     val hi: Double get() = center + width
+    /** Etichetta breve: "A · 50 Hz ±5" */
     val label: String get() = "$id · ${center.toInt()} Hz ±${width.toInt()}"
+    /** Etichetta frequenza completa per UI/export: "50 Hz (45–55 Hz)" */
+    val freqLabel: String get() = "${center.toInt()} Hz (${lo.toInt()}–${hi.toInt()} Hz)"
+    /** Etichetta compatta: "50 Hz" */
+    val freqShort: String get() = "${center.toInt()} Hz"
 }
 
 /** Canale vibrazioni da accelerometro ("V"). Livelli in dB rel 1 g. */

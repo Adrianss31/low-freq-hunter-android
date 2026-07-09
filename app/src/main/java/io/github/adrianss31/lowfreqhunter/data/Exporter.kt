@@ -97,9 +97,49 @@ object Exporter {
                 n++
                 val bc = b.cfg.band(ev.band)
                 val thr = if (ev.band == Channels.VIB) b.cfg.vib.thr else bc?.thr
-                sb.append("$n,${ev.band},${bc?.center?.toInt() ?: ""},${bc?.width?.toInt() ?: ""},${thr ?: ""},")
+                sb.append("$n,${ev.band},${bc?.center?.toInt() ?: \"\"},${bc?.width?.toInt() ?: \"\"},${thr ?: \"\"},")
                 sb.append("${isoUtc(ev.startT)},${isoUtc(ev.endT)},${ev.durationS},")
-                sb.append("${ev.peakDb?.let { "%.2f".format(Locale.US, it) } ?: ""},${ev.avgDb?.let { "%.2f".format(Locale.US, it) } ?: ""}\n")
+                sb.append("${ev.peakDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},${ev.avgDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"}\n")
+            }
+        }
+        return sb.toString()
+    }
+
+    /** CSV aggregato per banda: 1 riga per banda con statistiche aggregate */
+    fun bandsSummaryCsv(b: SessionBundle): String {
+        val sb = StringBuilder("band,center_hz,width_hz,threshold_dbfs,activations,total_duration_s,peak_db,avg_db,first_activation,last_activation\n")
+        for (bandCfg in b.cfg.enabledBands()) {
+            val bandEvents = b.events.filter { it.band == bandCfg.id }
+            if (bandEvents.isEmpty()) continue
+            val totalDuration = bandEvents.sumOf { it.durationS }
+            val activationCount = bandEvents.size
+            val peakDb = bandEvents.mapNotNull { it.peakDb }.maxOrNull()
+            val avgDb = bandEvents.mapNotNull { it.avgDb }.average().let { if (it.isNaN()) null else it }
+            val first = bandEvents.minByOrNull { it.startT }
+            val last = bandEvents.maxByOrNull { it.startT }
+            sb.append("${bandCfg.id},${bandCfg.center.toInt()},${bandCfg.width.toInt()},${bandCfg.thr},")
+            sb.append("$activationCount,$totalDuration,")
+            sb.append("${peakDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},")
+            sb.append("${avgDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},")
+            sb.append("${first?.let { isoUtc(it.startT) } ?: \"\"},")
+            sb.append("${last?.let { isoUtc(it.endT) } ?: \"\"}\n")
+        }
+        // Canale V se abilitato
+        if (b.cfg.vib.enabled) {
+            val vibEvents = b.events.filter { it.band == Channels.VIB }
+            if (vibEvents.isNotEmpty()) {
+                val totalDuration = vibEvents.sumOf { it.durationS }
+                val activationCount = vibEvents.size
+                val peakDb = vibEvents.mapNotNull { it.peakDb }.maxOrNull()
+                val avgDb = vibEvents.mapNotNull { it.avgDb }.average().let { if (it.isNaN()) null else it }
+                val first = vibEvents.minByOrNull { it.startT }
+                val last = vibEvents.maxByOrNull { it.startT }
+                sb.append("V,0,0,${b.cfg.vib.thr},")
+                sb.append("$activationCount,$totalDuration,")
+                sb.append("${peakDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},")
+                sb.append("${avgDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},")
+                sb.append("${first?.let { isoUtc(it.startT) } ?: \"\"},")
+                sb.append("${last?.let { isoUtc(it.endT) } ?: \"\"}\n")
             }
         }
         return sb.toString()
@@ -113,9 +153,9 @@ object Exporter {
         b.samples.forEachIndexed { i, s ->
             sb.append("${isoUtc(s.t)},${s.t}")
             val lv = b.levels[i]
-            for (id in bandIds) sb.append(",${lv[id]?.let { "%.2f".format(Locale.US, it) } ?: ""}")
+            for (id in bandIds) sb.append(",${lv[id]?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"}")
             sb.append(",${"%.2f".format(Locale.US, s.ref)},${s.domHz}")
-            sb.append(",${s.vibDb?.let { "%.2f".format(Locale.US, it) } ?: ""},${s.battPct ?: ""}\n")
+            sb.append(",${s.vibDb?.let { \"%.2f\".format(Locale.US, it) } ?: \"\"},${s.battPct ?: \"\"}\n")
         }
         return sb.toString()
     }
@@ -169,19 +209,21 @@ object Exporter {
 
     // ── Report PNG ──────────────────────────────────────────────────────────
     fun reportPng(b: SessionBundle): ByteArray {
-        val w = 1400
-        val evRows = minOf(b.events.size + b.gaps.size, 28)
-        val h = 560 + evRows * 22 + 60
+        // Riduci dimensione bitmap per performance: max 1200px larghezza, downsample spectrogram
+        val w = 1200
+        val maxEventRows = 40
+        val evRows = minOf(b.events.size + b.gaps.size, maxEventRows)
+        val h = 500 + evRows * 20 + 60
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.WHITE)
 
-        val title = paint(Color.rgb(17, 17, 17), 26f, bold = true)
-        val body = paint(Color.rgb(51, 51, 51), 15f)
-        val small = paint(Color.rgb(136, 136, 136), 13f)
-        val mono = paint(Color.rgb(34, 34, 34), 14f, mono = true)
+        val title = paint(Color.rgb(17, 17, 17), 24f, bold = true)
+        val body = paint(Color.rgb(51, 51, 51), 14f)
+        val small = paint(Color.rgb(136, 136, 136), 12f)
+        val mono = paint(Color.rgb(34, 34, 34), 13f, mono = true)
 
-        c.drawText("Low-Freq Hunter — Report sessione", 30f, 44f, title)
+        c.drawText("Low-Freq Hunter — Report sessione", 30f, 40f, title)
         val s = b.session
         val endStr = s.endedAt?.let { "${fmtDate(it)} ${fmtClock(it)}" } ?: "—"
         val durStr = s.endedAt?.let { fmtDur((it - s.startedAt) / 1000) } ?: "—"
@@ -195,51 +237,80 @@ object Exporter {
             "FFT ${b.cfg.fftSize} @ ${s.sampleRate} Hz (≈${"%.2f".format(s.binHz)} Hz/bin) · Sorgente ${s.audioSource} · dBFS non calibrati in dB SPL" +
                 if (s.recovered) " · SESSIONE RECUPERATA (interruzione)" else "",
         )
-        lines.forEachIndexed { i, l -> c.drawText(l, 30f, 76f + i * 22f, body) }
+        lines.forEachIndexed { i, l -> c.drawText(l, 30f, 70f + i * 20f, body) }
 
-        // spettrogramma
-        var y = 180f
-        c.drawText("Spettrogramma 20–200 Hz (tutta la sessione)", 30f, y - 8f, paint(Color.rgb(17, 17, 17), 16f, bold = true))
-        drawWaterfall(c, 30f, y, w - 60f, 150f, b)
-        y += 185f
+        // spettrogramma - downsampled per performance
+        var y = 150f
+        c.drawText("Spettrogramma 20–200 Hz (tutta la sessione, downsampled)", 30f, y - 8f, paint(Color.rgb(17, 17, 17), 14f, bold = true))
+        drawWaterfallOptimized(c, 30f, y, w - 60f, 120f, b)
+        y += 155f
 
         // timeline
         c.drawText(
             "Livelli nel tempo (dBFS) — regioni colorate = eventi, grigie = gap, ▲ = marker",
-            30f, y - 8f, paint(Color.rgb(17, 17, 17), 16f, bold = true),
+            30f, y - 8f, paint(Color.rgb(17, 17, 17), 14f, bold = true),
         )
-        drawTimeline(c, 30f, y, w - 60f, 140f, b)
-        y += 175f
+        drawTimelineOptimized(c, 30f, y, w - 60f, 120f, b)
+        y += 150f
 
-        // tabella eventi
+        // tabella eventi per-banda (summary)
         c.drawText(
-            "Eventi (${b.events.size})" + if (b.markers.isNotEmpty()) " · Marker: ${b.markers.size}" else "",
-            30f, y - 8f, paint(Color.rgb(17, 17, 17), 16f, bold = true),
+            "Bande (${b.cfg.enabledBands().size})" + if (b.markers.isNotEmpty()) " · Marker: ${b.markers.size}" else "",
+            30f, y - 8f, paint(Color.rgb(17, 17, 17), 14f, bold = true),
         )
-        c.drawText("#    canale  inizio      fine        durata      picco        media", 30f, y + 16f, small)
-        val rows = (b.events + b.gaps).sortedBy { it.startT }.take(28)
-        var n = 0
-        rows.forEachIndexed { i, ev ->
-            val ry = y + 40f + i * 22f
-            if (ev.band == Channels.GAP) {
+        c.drawText("banda    freq     attivazioni  durata_tot  picco    prima_attivazione    ultima_attivazione", 30f, y + 14f, small)
+        var row = 0
+        for (bandCfg in b.cfg.enabledBands()) {
+            val bandEvents = b.events.filter { it.band == bandCfg.id }
+            if (bandEvents.isEmpty()) continue
+            val totalDuration = bandEvents.sumOf { it.durationS }
+            val activationCount = bandEvents.size
+            val peakDb = bandEvents.mapNotNull { it.peakDb }.maxOrNull()
+            val first = bandEvents.minByOrNull { it.startT }
+            val last = bandEvents.maxByOrNull { it.startT }
+            val ry = y + 34f + row * 20f
+            c.drawText(
+                "${bandCfg.id.padEnd(6)} ${bandCfg.freqShort.padEnd(10)} ${activationCount.toString().padEnd(12)} ${fmtDur(totalDuration).padEnd(10)}  ${peakDb?.let { "%.1f".format(it) }.padEnd(7) ?: \"—.padEnd(7)\"}  ${first?.let { fmtClock(it.startT * 1000) } ?: \"—\"}    ${last?.let { fmtClock(it.endT * 1000) } ?: \"—\"}",
+                30f, ry, mono,
+            )
+            // quadratino colore
+            val p = Paint().apply { color = Palette.bandColorInt(bandCfg.id) }
+            c.drawRect(40f, ry - 10f, 50f, ry - 1f, p)
+            row++
+            if (row >= maxEventRows) break
+        }
+        // Canale V
+        if (b.cfg.vib.enabled) {
+            val vibEvents = b.events.filter { it.band == Channels.VIB }
+            if (vibEvents.isNotEmpty()) {
+                val totalDuration = vibEvents.sumOf { it.durationS }
+                val activationCount = vibEvents.size
+                val peakDb = vibEvents.mapNotNull { it.peakDb }.maxOrNull()
+                val first = vibEvents.minByOrNull { it.startT }
+                val last = vibEvents.maxByOrNull { it.startT }
+                val ry = y + 34f + row * 20f
                 c.drawText(
-                    "—    GAP     ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${fmtDur(ev.durationS).padEnd(10)}  monitoraggio interrotto",
-                    30f, ry, paint(Color.rgb(153, 153, 153), 14f, mono = true),
-                )
-            } else {
-                n++
-                c.drawText(
-                    "${n.toString().padEnd(4)} ${ev.band.padEnd(7)} ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${
-                        fmtDur(ev.durationS).padEnd(10)
-                    }  ${(ev.peakDb?.let { "%.1f".format(it) } ?: "—").padEnd(11)} ${ev.avgDb?.let { "%.1f".format(it) } ?: "—"}",
+                    "V      vibra    ${activationCount.toString().padEnd(12)} ${fmtDur(totalDuration).padEnd(10)}  ${peakDb?.let { "%.1f".format(it) }.padEnd(7) ?: \"—.padEnd(7)\"}  ${first?.let { fmtClock(it.startT * 1000) } ?: \"—\"}    ${last?.let { fmtClock(it.endT * 1000) } ?: \"—\"}",
                     30f, ry, mono,
                 )
-                val p = Paint().apply { color = Palette.bandColorInt(ev.band) }
-                c.drawRect(64f, ry - 11f, 74f, ry - 1f, p)
+                val p = Paint().apply { color = Palette.VIB }
+                c.drawRect(40f, ry - 10f, 50f, ry - 1f, p)
+                row++
             }
         }
-        if (b.events.size + b.gaps.size > 28) {
-            c.drawText("… e altri ${b.events.size + b.gaps.size - 28} (vedi CSV)", 30f, y + 40f + 28 * 22f, small)
+
+        // Gap
+        if (b.gaps.isNotEmpty()) {
+            c.drawText("Gap monitoraggio (${b.gaps.size})", 30f, y + 34f + row * 20f + 8f, paint(Color.rgb(17, 17, 17), 14f, bold = true))
+            var gapRow = 0
+            for (gap in b.gaps.sortedBy { it.startT }.take(maxEventRows - row)) {
+                val ry = y + 34f + (row + gapRow + 1) * 20f + 8f
+                c.drawText(
+                    "—    GAP     ${fmtClock(gap.startT * 1000)}    ${fmtClock(gap.endT * 1000)}    ${fmtDur(gap.durationS).padEnd(10)}  monitoraggio interrotto",
+                    30f, ry, paint(Color.rgb(153, 153, 153), 13f, mono = true),
+                )
+                gapRow++
+            }
         }
 
         c.drawText(
@@ -264,55 +335,68 @@ object Exporter {
             }
         }
 
-    private fun drawWaterfall(c: Canvas, x0: Float, y0: Float, w: Float, h: Float, b: SessionBundle) {
+    /** Spettrogramma ottimizzato: downsample colonne per performance */
+    private fun drawWaterfallOptimized(c: Canvas, x0: Float, y0: Float, w: Float, h: Float, b: SessionBundle) {
         val bg = Paint().apply { color = Color.BLACK }
         c.drawRect(x0, y0, x0 + w, y0 + h, bg)
-        if (b.slices.isNotEmpty()) {
-            var lo = 255
-            var hi = 0
-            for (sl in b.slices) for (v in sl.bins) {
-                val q = v.toInt() and 0xFF
-                if (q < lo) lo = q
-                if (q > hi) hi = q
-            }
-            if (hi - lo < 20) hi = lo + 20
-            val nBins = b.slices[0].bins.size
-            val cols = maxOf(b.slices.size, 60)
-            val colW = w / cols
-            val rowH = h / nBins
-            val p = Paint()
-            b.slices.forEachIndexed { xi, sl ->
-                val x = x0 + xi * colW
-                for (bin in 0 until nBins) {
-                    val v = ((sl.bins[bin].toInt() and 0xFF) - lo).toFloat() / (hi - lo)
-                    p.color = Palette.wfColorInt(v)
-                    c.drawRect(x, y0 + h - (bin + 1) * rowH, x + colW + 1f, y0 + h - bin * rowH + 1f, p)
-                }
+        if (b.slices.isEmpty()) return
+
+        // Calcola range dinamico
+        var lo = 255
+        var hi = 0
+        for (sl in b.slices) for (v in sl.bins) {
+            val q = v.toInt() and 0xFF
+            if (q < lo) lo = q
+            if (q > hi) hi = q
+        }
+        if (hi - lo < 20) hi = lo + 20
+
+        val nBins = b.slices[0].bins.size
+        // Downsample: max 400 colonne per performance
+        val maxCols = 400
+        val cols = minOf(b.slices.size, maxCols)
+        val colW = w / cols
+        val rowH = h / nBins
+
+        // Pre-calcola indici slice da usare (uniformemente distribuiti)
+        val step = if (b.slices.size > cols) b.slices.size.toDouble() / cols else 1.0
+        val p = Paint()
+        
+        for (colIdx in 0 until cols) {
+            val sliceIdx = (colIdx * step).toInt().coerceAtMost(b.slices.size - 1)
+            val sl = b.slices[sliceIdx]
+            val x = x0 + colIdx * colW
+            for (bin in 0 until nBins) {
+                val v = ((sl.bins[bin].toInt() and 0xFF) - lo).toFloat() / (hi - lo)
+                p.color = Palette.wfColorInt(v)
+                c.drawRect(x, y0 + h - (bin + 1) * rowH, x + colW + 1f, y0 + h - bin * rowH + 1f, p)
             }
         }
+
         // guide bande
         for (band in b.cfg.enabledBands()) {
-            val y = y0 + h - ((band.center - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
-            if (y < y0 || y > y0 + h) continue
-            val p = Paint().apply {
+            val yy = y0 + h - ((band.center - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
+            if (yy < y0 || yy > y0 + h) continue
+            val gp = Paint().apply {
                 color = Palette.bandColorInt(band.id)
                 strokeWidth = 2f
                 pathEffect = DashPathEffect(floatArrayOf(6f, 6f), 0f)
                 style = Paint.Style.STROKE
             }
-            c.drawLine(x0, y, x0 + w, y, p)
-            c.drawText("${band.center.toInt()}Hz", x0 + 6f, y - 4f, paint(Palette.bandColorInt(band.id), 12f, mono = true))
+            c.drawLine(x0, yy, x0 + w, yy, gp)
+            c.drawText("${band.center.toInt()}Hz", x0 + 6f, yy - 4f, paint(Palette.bandColorInt(band.id), 11f, mono = true))
         }
         val border = Paint().apply { color = Color.rgb(200, 200, 200); style = Paint.Style.STROKE }
         c.drawRect(x0, y0, x0 + w, y0 + h, border)
         // orari
-        c.drawText(fmtClock(b.session.startedAt), x0 + 4f, y0 + h - 6f, paint(Color.WHITE, 12f, mono = true))
+        c.drawText(fmtClock(b.session.startedAt), x0 + 4f, y0 + h - 6f, paint(Color.WHITE, 11f, mono = true))
         val endLbl = fmtClock(b.session.endedAt ?: System.currentTimeMillis())
-        val lp = paint(Color.WHITE, 12f, mono = true)
+        val lp = paint(Color.WHITE, 11f, mono = true)
         c.drawText(endLbl, x0 + w - lp.measureText(endLbl) - 4f, y0 + h - 6f, lp)
     }
 
-    private fun drawTimeline(c: Canvas, x0: Float, y0: Float, w: Float, h: Float, b: SessionBundle) {
+    /** Timeline ottimizzata: stride campioni, meno path operations */
+    private fun drawTimelineOptimized(c: Canvas, x0: Float, y0: Float, w: Float, h: Float, b: SessionBundle) {
         val bg = Paint().apply { color = Color.rgb(250, 250, 250) }
         c.drawRect(x0, y0, x0 + w, y0 + h, bg)
         val border = Paint().apply { color = Color.rgb(200, 200, 200); style = Paint.Style.STROKE }
@@ -327,36 +411,42 @@ object Exporter {
         fun xOf(t: Long) = x0 + (t - tMin) / span * w
         fun yOf(db: Double) = (y0 + h - (db.coerceIn(dbMin, dbMax) - dbMin) / (dbMax - dbMin) * h).toFloat()
 
+        // Gap
         for (g in b.gaps) {
             val p = Paint().apply { color = Color.argb(28, 0, 0, 0) }
             c.drawRect(xOf(g.startT), y0, maxOf(xOf(g.endT), xOf(g.startT) + 2f), y0 + h, p)
         }
-        for (ev in b.events) {
-            val base = Palette.bandColorInt(ev.band)
+        // Eventi come rettangoli sottili per banda
+        for (band in b.cfg.enabledBands()) {
+            val bandEvents = b.events.filter { it.band == band.id }
+            val base = Palette.bandColorInt(band.id)
             val p = Paint().apply { color = (base and 0x00FFFFFF) or (0x30 shl 24) }
-            c.drawRect(xOf(ev.startT), y0, maxOf(xOf(ev.endT), xOf(ev.startT) + 2f), y0 + h, p)
+            for (ev in bandEvents) {
+                c.drawRect(xOf(ev.startT), y0, maxOf(xOf(ev.endT), xOf(ev.startT) + 2f), y0 + h, p)
+            }
         }
 
+        // Griglia dB
         val gridP = Paint().apply { color = Color.rgb(229, 229, 229); strokeWidth = 1f }
         var db = -100.0
         while (db <= -20.0) {
             c.drawLine(x0, yOf(db), x0 + w, yOf(db), gridP)
-            c.drawText("${db.toInt()}", x0 + 4f, yOf(db) - 3f, paint(Color.rgb(150, 150, 150), 11f, mono = true))
+            c.drawText("${db.toInt()}", x0 + 4f, yOf(db) - 3f, paint(Color.rgb(150, 150, 150), 10f, mono = true))
             db += 20.0
         }
 
-        // soglie tratteggiate
+        // Soglie tratteggiate
         for (band in b.cfg.enabledBands()) {
             val p = Paint().apply {
                 color = Palette.bandColorInt(band.id)
-                strokeWidth = 2f
+                strokeWidth = 1.5f
                 style = Paint.Style.STROKE
                 pathEffect = DashPathEffect(floatArrayOf(8f, 8f), 0f)
             }
             c.drawLine(x0, yOf(band.thr), x0 + w, yOf(band.thr), p)
         }
 
-        // curve: ref grigia + bande + V
+        // Curve: downsample pesante per performance
         val stride = maxOf(1, b.samples.size / (w.toInt() * 2))
         fun plot(color: Int, width: Float, getter: (Int) -> Double?) {
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -389,7 +479,7 @@ object Exporter {
             plot(Color.rgb(90, 90, 100), 2f) { b.samples[it].vibDb }
         }
 
-        // marker
+        // Marker
         for (m in b.markers) {
             val x = xOf(m.t)
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(212, 0, 0) }
@@ -401,11 +491,11 @@ object Exporter {
             c.drawPath(path, p)
         }
 
-        // orari
-        for (i in 0..6) {
-            val t = tMin + ((tMax - tMin) * i / 6.0).toLong()
+        // Orari
+        for (i in 0..4) {
+            val t = tMin + ((tMax - tMin) * i / 4.0).toLong()
             val lbl = fmtClock(t * 1000)
-            val lp = paint(Color.rgb(120, 120, 120), 11f, mono = true)
+            val lp = paint(Color.rgb(120, 120, 120), 10f, mono = true)
             val x = minOf(xOf(t) + 2f, x0 + w - lp.measureText(lbl) - 2f)
             c.drawText(lbl, x, y0 + h - 5f, lp)
         }

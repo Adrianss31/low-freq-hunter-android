@@ -292,6 +292,20 @@ fun SettingsScreen() {
             "Isteresi ${settings.engine.hystDb.toInt()} dB · slice waterfall 30 s · gap oltre 5 s",
             color = Lfh.TextFaint,
         )
+        
+        // Vista eventi
+        CapsLabel("Visualizzazione eventi", color = Lfh.Text)
+        Panel(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Modalità lista eventi", color = Lfh.Text, fontSize = 14.sp)
+                    CapsLabel("Per-banda = 1 riga per frequenza con attivazioni; Per-evento = elenco cronologico", color = Lfh.TextFaint)
+                }
+                HwSwitch(settings.eventsViewPerBand) {
+                    upd { it.copy(eventsViewPerBand = !it.eventsViewPerBand) }
+                }
+            }
+        }
     }
 }
 
