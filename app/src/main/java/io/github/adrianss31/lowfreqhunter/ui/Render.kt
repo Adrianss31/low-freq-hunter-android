@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.unit.dp
 import io.github.adrianss31.lowfreqhunter.engine.BandCfg
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import kotlin.math.roundToInt
@@ -104,17 +105,44 @@ object Render {
         }
     }
 
+    private fun DrawScope.labelRight(text: String, xRight: Float, y: Float, color: Color) {
+        val p = android.graphics.Paint(textPaint)
+        p.color = android.graphics.Color.argb(
+            220,
+            (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt(),
+        )
+        drawContext.canvas.nativeCanvas.drawText(text, xRight - p.measureText(text), y, p)
+    }
+
+    /**
+     * Scala delle frequenze FUORI dal grafico: etichette colorate + tick nel
+     * gutter sinistro, così il waterfall resta pulito. Ritorna la x d'inizio
+     * del plot.
+     */
+    private fun DrawScope.wfGutter(guides: List<Pair<Double, Color>>): Float {
+        val gutter = 34.dp.toPx()
+        val h = size.height
+        for ((hz, color) in guides) {
+            val y = (h - (hz - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
+            if (y < 0 || y > h) continue
+            drawLine(color, Offset(gutter - 5.dp.toPx(), y), Offset(gutter - 1.dp.toPx(), y), strokeWidth = 2f)
+            labelRight("${hz.toInt()}", gutter - 7.dp.toPx(), y + 4.dp.toPx(), color)
+        }
+        return gutter
+    }
+
     /**
      * Waterfall da slice quantizzate (byte 0..255). Range dinamico stirato
-     * sui dati come nella PWA. [guides]: (Hz, colore) linee orizzontali.
+     * sui dati come nella PWA. [guides]: (Hz, colore) — solo scala nel gutter.
      */
     fun DrawScope.drawWaterfallSlices(
         slices: List<Pair<Long, ByteArray>>,
         guides: List<Pair<Double, Color>>,
     ) {
-        val w = size.width
         val h = size.height
-        drawRect(Color.Black, Offset.Zero, size)
+        val gutter = wfGutter(guides)
+        val plotW = size.width - gutter
+        drawRect(Color.Black, Offset(gutter, 0f), Size(plotW, h))
         if (slices.isNotEmpty()) {
             var lo = 255
             var hi = 0
@@ -128,10 +156,10 @@ object Render {
             if (hi - lo < 20) hi = lo + 20
             val nBins = slices[0].second.size
             val cols = maxOf(slices.size, 60)
-            val colW = w / cols
+            val colW = plotW / cols
             val rowH = h / nBins
             slices.forEachIndexed { xi, (_, bins) ->
-                val x = xi * colW
+                val x = gutter + xi * colW
                 for (b in 0 until nBins) {
                     val v = ((bins[b].toInt() and 0xFF) - lo).toFloat() / (hi - lo)
                     drawRect(
@@ -141,12 +169,6 @@ object Render {
                     )
                 }
             }
-        }
-        for ((hz, color) in guides) {
-            val y = (h - (hz - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
-            if (y < 0 || y > h) continue
-            drawLine(color.copy(alpha = 0.55f), Offset(0f, y), Offset(w, y), strokeWidth = 1.5f)
-            label("${hz.toInt()}", 4f, y - 4f, color)
         }
     }
 
@@ -262,14 +284,15 @@ object Render {
         maxColumns: Int,
         guides: List<Pair<Double, Color>>,
     ) {
-        val w = size.width
         val h = size.height
-        drawRect(Color.Black, Offset.Zero, size)
+        val gutter = wfGutter(guides)
+        val plotW = size.width - gutter
+        drawRect(Color.Black, Offset(gutter, 0f), Size(plotW, h))
         if (columns.isNotEmpty()) {
             val nBins = columns[0].size
-            val colW = w / maxColumns
+            val colW = plotW / maxColumns
             val rowH = h / nBins
-            val startX = w - columns.size * colW
+            val startX = gutter + plotW - columns.size * colW
             columns.forEachIndexed { xi, col ->
                 val x = startX + xi * colW
                 for (b in 0 until nBins) {
@@ -277,11 +300,6 @@ object Render {
                     drawRect(wfColor(v), Offset(x, h - (b + 1) * rowH), Size(colW + 1f, rowH + 1f))
                 }
             }
-        }
-        for ((hz, color) in guides) {
-            val y = (h - (hz - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
-            if (y < 0 || y > h) continue
-            drawLine(color.copy(alpha = 0.55f), Offset(0f, y), Offset(w, y), strokeWidth = 1.5f)
         }
     }
 }

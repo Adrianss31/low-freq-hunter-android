@@ -150,19 +150,22 @@ fun LiveScreen() {
     val selLevel = selBand?.let { levels[it] }
     if (selLevel != null && selLevel > peak) peak = selLevel
 
-    // geiger
+    // geiger — relativo alla soglia della banda selezionata: silenzioso
+    // finché il livello è >36 dB sotto soglia, accelera avvicinandosi,
+    // satura a soglia raggiunta. (Prima mappava il livello assoluto e con
+    // il rumore ambiente ticchettava sempre al massimo.)
     LaunchedEffect(geiger) {
         if (!geiger) return@LaunchedEffect
-        val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+        val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 45)
         try {
             while (geiger) {
-                val lvl = selBand?.let { id ->
-                    frame?.let { fr ->
-                        settings.engine.band(id)?.let { b -> Bands.bandDb(fr.spec, fr.binHz, b.lo, b.hi) }
-                    }
+                val band = selBand?.let { settings.engine.band(it) }
+                val lvl = band?.let { b ->
+                    frame?.let { fr -> Bands.bandDb(fr.spec, fr.binHz, b.lo, b.hi) }
                 } ?: -120.0
-                val norm = ((lvl + 120.0) / 80.0).coerceIn(0.0, 1.0)
-                val rate = norm * norm * 30.0
+                val thr = band?.thr ?: -55.0
+                val norm = ((lvl - (thr - 36.0)) / 36.0).coerceIn(0.0, 1.0)
+                val rate = norm * norm * 25.0
                 if (rate > 0.3) {
                     tg.startTone(ToneGenerator.TONE_PROP_BEEP, 25)
                     delay(((1000.0 / rate) * (0.4 + Math.random() * 1.2)).toLong())

@@ -155,13 +155,20 @@ object BitmapRender {
         return bmp
     }
 
-    /** Spettrogramma: slice quantizzate → colonne, guide alle frequenze bande. */
+    /**
+     * Spettrogramma: slice quantizzate → colonne. Scala delle frequenze nel
+     * gutter sinistro, FUORI dal grafico (le guide interne coprivano i dati).
+     */
     fun waterfall(b: SessionBundle, wPx: Int, hPx: Int, d: Float): Bitmap {
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        c.drawColor(Color.BLACK)
+        c.drawColor(BG)
         val w = wPx.toFloat()
         val h = hPx.toFloat()
+        val gutter = 30 * d
+        val plotW = w - gutter
+        val bgP = Paint().apply { color = Color.BLACK }
+        c.drawRect(gutter, 0f, w, h, bgP)
         val slices = b.slices
         if (slices.isNotEmpty()) {
             var lo = 255
@@ -174,11 +181,11 @@ object BitmapRender {
             if (hi - lo < 20) hi = lo + 20
             val nBins = slices[0].bins.size
             val cols = maxOf(slices.size, 60)
-            val colW = w / cols
+            val colW = plotW / cols
             val rowH = h / nBins
             val p = Paint()
             slices.forEachIndexed { xi, sl ->
-                val x = xi * colW
+                val x = gutter + xi * colW
                 for (bin in 0 until nBins) {
                     val v = ((sl.bins[bin].toInt() and 0xFF) - lo).toFloat() / (hi - lo)
                     p.color = Palette.wfColorInt(v)
@@ -186,18 +193,16 @@ object BitmapRender {
                 }
             }
         }
+        // scala nel gutter: etichetta + tick, niente linee nel plot
+        val tick = Paint().apply { strokeWidth = 2f }
         for (band in b.cfg.enabledBands()) {
             val y = h - ((band.center - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
             if (y < 0 || y > h) continue
             val col = Palette.bandColorInt(band.id)
-            val line = Paint().apply {
-                color = col
-                strokeWidth = 1.2f * d
-                pathEffect = DashPathEffect(floatArrayOf(4f, 4f), 0f)
-                style = Paint.Style.STROKE
-            }
-            c.drawLine(0f, y, w, y, line)
-            c.drawText("${band.center.toInt()}", 4 * d, y - 3 * d, paint(col, 9 * d))
+            tick.color = col
+            c.drawLine(gutter - 5 * d, y, gutter - 1 * d, y, tick)
+            val lp = paint(col, 9 * d)
+            c.drawText("${band.center.toInt()}", gutter - 7 * d - lp.measureText("${band.center.toInt()}"), y + 3 * d, lp)
         }
         return bmp
     }

@@ -78,6 +78,28 @@ data class ClipEntity(
     val mime: String,
 )
 
+/** Rilievo: mappa della casa con punti di misura (heatmap per frequenza). */
+@Entity(tableName = "surveys")
+data class SurveyEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val createdAt: Long,          // epoch ms
+    val imagePath: String?,       // piantina in filesDir/surveys/, null = griglia
+    val cfgJson: String,          // snapshot bande al momento della creazione
+)
+
+@Entity(tableName = "survey_points")
+data class SurveyPointEntity(
+    @PrimaryKey val id: String,
+    @ColumnInfo(index = true) val surveyId: String,
+    val x: Float,                 // coordinate normalizzate 0..1 sulla mappa
+    val y: Float,
+    val levelsJson: String,       // Map<bandId, dBFS medio del dwell>
+    val vibDb: Double?,           // canale vibrazioni medio, se attivo
+    val t: Long,                  // epoch s della misura
+    val dwellS: Int,              // durata della misura
+)
+
 @Dao
 interface LfhDao {
     // sessioni
@@ -127,6 +149,31 @@ interface LfhDao {
     @Query("SELECT * FROM clips WHERE sessionId = :id ORDER BY t")
     suspend fun clips(id: String): List<ClipEntity>
 
+    // rilievi (mappa casa)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSurvey(s: SurveyEntity)
+
+    @Query("SELECT * FROM surveys ORDER BY createdAt DESC")
+    fun surveysFlow(): Flow<List<SurveyEntity>>
+
+    @Query("SELECT * FROM surveys WHERE id = :id")
+    suspend fun survey(id: String): SurveyEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSurveyPoint(p: SurveyPointEntity)
+
+    @Query("SELECT * FROM survey_points WHERE surveyId = :id ORDER BY t")
+    fun surveyPointsFlow(id: String): Flow<List<SurveyPointEntity>>
+
+    @Query("DELETE FROM survey_points WHERE id = :pointId")
+    suspend fun deleteSurveyPoint(pointId: String)
+
+    @Query("DELETE FROM survey_points WHERE surveyId = :id")
+    suspend fun deleteSurveyPoints(id: String)
+
+    @Query("DELETE FROM surveys WHERE id = :id")
+    suspend fun deleteSurvey(id: String)
+
     // cancellazione sessione completa
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteSession(id: String)
@@ -151,19 +198,40 @@ interface LfhDao {
     entities = [
         SessionEntity::class, SampleEntity::class, EventEntity::class,
         SliceEntity::class, MarkerEntity::class, ClipEntity::class,
+        SurveyEntity::class, SurveyPointEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class LfhDb : RoomDatabase() {
     abstract fun dao(): LfhDao
 
     companion object {
+        // v1 → v2: tabelle dei rilievi (mappa casa). Migrazione additiva:
+        // le sessioni registrate non si toccano.
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `surveys` (" +
+                        "`id` TEXT NOT NULL, `name` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, " +
+                        "`imagePath` TEXT, `cfgJson` TEXT NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `survey_points` (" +
+                        "`id` TEXT NOT NULL, `surveyId` TEXT NOT NULL, `x` REAL NOT NULL, `y` REAL NOT NULL, " +
+                        "`levelsJson` TEXT NOT NULL, `vibDb` REAL, `t` INTEGER NOT NULL, `dwellS` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_survey_points_surveyId` ON `survey_points` (`surveyId`)")
+            }
+        }
+
         @Volatile private var instance: LfhDb? = null
 
         fun get(context: Context): LfhDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(context.applicationContext, LfhDb::class.java, "lfh.db")
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                     .also { instance = it }
             }
