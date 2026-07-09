@@ -26,6 +26,7 @@ import io.github.adrianss31.lowfreqhunter.ui.LiveScreen
 import io.github.adrianss31.lowfreqhunter.ui.NightScreen
 import io.github.adrianss31.lowfreqhunter.ui.SettingsScreen
 import io.github.adrianss31.lowfreqhunter.ui.SummaryScreen
+import io.github.adrianss31.lowfreqhunter.ui.SurveyScreen
 import io.github.adrianss31.lowfreqhunter.ui.TabBar
 
 class MainActivity : ComponentActivity() {
@@ -68,9 +69,10 @@ private fun Root() {
                 0 -> LiveScreen()
                 1 -> NightScreen()
                 2 -> SummaryScreen()
+                3 -> SurveyScreen()
                 else -> SettingsScreen()
             }
         }
-        TabBar(listOf("Live", "Notte", "Log", "Setup"), tab) { tab = it }
+        TabBar(listOf("Live", "Notte", "Log", "Mappa", "Setup"), tab) { tab = it }
     }
 }

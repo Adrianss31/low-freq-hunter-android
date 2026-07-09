@@ -411,6 +411,94 @@ object Exporter {
         }
     }
 
+    // ── PNG del rilievo (heatmap casa) ──────────────────────────────────────
+    fun surveyPng(
+        s: SurveyEntity,
+        pts: List<io.github.adrianss31.lowfreqhunter.engine.Idw.Point>,
+        allXY: List<Pair<Float, Float>>,
+        bandLabel: String,
+        bg: Bitmap?,
+    ): ByteArray {
+        val w = 1200
+        val ratio = (bg?.let { it.width.toFloat() / it.height } ?: (4f / 3f)).coerceIn(0.5f, 2.5f)
+        val mapW = w - 60
+        val mapH = (mapW / ratio).toInt()
+        val h = 90 + mapH + 110
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.WHITE)
+
+        c.drawText("Mappa rumore · $bandLabel — ${s.name}", 30f, 44f, paint(Color.rgb(17, 17, 17), 24f, bold = true))
+        c.drawText(
+            "Rilievo del ${fmtDate(s.createdAt)} · ${allXY.size} punti di misura · heatmap IDW",
+            30f, 68f, paint(Color.rgb(102, 102, 102), 14f),
+        )
+
+        val mx = 30f
+        val my = 84f
+        // sfondo piantina o griglia
+        if (bg != null) {
+            val srcR = android.graphics.Rect(0, 0, bg.width, bg.height)
+            val dstR = android.graphics.RectF(mx, my, mx + mapW, my + mapH)
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 200 }
+            c.drawBitmap(bg, srcR, dstR, p)
+        } else {
+            val p = Paint().apply { color = Color.rgb(245, 245, 247) }
+            c.drawRect(mx, my, mx + mapW, my + mapH, p)
+            val dot = Paint().apply { color = Color.rgb(210, 210, 216) }
+            var gy = my + 24f
+            while (gy < my + mapH) {
+                var gx = mx + 24f
+                while (gx < mx + mapW) {
+                    c.drawCircle(gx, gy, 1.8f, dot)
+                    gx += 36f
+                }
+                gy += 36f
+            }
+        }
+        // heatmap
+        val heat = io.github.adrianss31.lowfreqhunter.ui.HeatmapRender.render(pts, mapW, mapH, alpha = 200)
+        if (heat != null) {
+            c.drawBitmap(heat.bitmap, mx, my, null)
+        }
+        // punti
+        val ptOuter = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+        val ptInner = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        for ((x, y) in allXY) {
+            c.drawCircle(mx + x * mapW, my + y * mapH, 8f, ptOuter)
+            c.drawCircle(mx + x * mapW, my + y * mapH, 5.5f, ptInner)
+        }
+        val border = Paint().apply { color = Color.rgb(180, 180, 186); style = Paint.Style.STROKE; strokeWidth = 2f }
+        c.drawRect(mx, my, mx + mapW, my + mapH, border)
+
+        // legenda
+        val ly = my + mapH + 30f
+        val legW = w - 260f
+        val seg = Paint()
+        val n = 96
+        for (i in 0 until n) {
+            seg.color = Palette.wfColorInt(i / (n - 1f))
+            c.drawRect(30f + i * legW / n, ly, 30f + (i + 1) * legW / n + 1f, ly + 16f, seg)
+        }
+        if (heat != null) {
+            c.drawText("%.1f".format(heat.minDb), 30f, ly + 38f, paint(Color.rgb(80, 80, 80), 14f, mono = true))
+            val maxS = "%.1f".format(heat.maxDb)
+            val mp = paint(Color.rgb(80, 80, 80), 14f, mono = true)
+            c.drawText(maxS, 30f + legW - mp.measureText(maxS), ly + 38f, mp)
+        }
+        c.drawText(if (bandLabel.contains("Vibraz")) "dB rel 1 g" else "dBFS", 30f + legW + 14f, ly + 14f, paint(Color.rgb(80, 80, 80), 14f))
+        c.drawText(
+            "Low-Freq Hunter — misura indicativa, non fonometria certificata",
+            30f, h - 16f, paint(Color.rgb(160, 160, 160), 12f),
+        )
+
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        bmp.recycle()
+        heat?.bitmap?.recycle()
+        return out.toByteArray()
+    }
+
     // ── Salvataggio e condivisione ──────────────────────────────────────────
 
     /** Salva in Documents/LowFreqHunter via MediaStore. Ritorna l'uri o null. */
