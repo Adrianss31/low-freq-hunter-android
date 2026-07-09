@@ -307,9 +307,9 @@ private fun BandCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(8.dp))
-            Text(band.id, color = color, fontSize = 17.sp, fontFamily = DotFont)
-            Spacer(Modifier.width(10.dp))
-            CapsLabel(band.label, Modifier.weight(1f), color = Lfh.TextDim)
+            Text("${band.center.toInt()}", color = color, fontSize = 20.sp, fontFamily = DotFont)
+            Spacer(Modifier.width(4.dp))
+            CapsLabel("Hz ±${band.width.toInt()}", Modifier.weight(1f), color = Lfh.TextDim)
             HwSwitch(band.enabled) { onChange { it.copy(enabled = !it.enabled) } }
             if (canDelete) {
                 Spacer(Modifier.width(8.dp))

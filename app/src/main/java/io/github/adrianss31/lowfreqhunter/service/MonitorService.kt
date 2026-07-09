@@ -300,16 +300,16 @@ class MonitorService : Service() {
         if (evs.isEmpty()) {
             lines.append("Nessun evento sopra soglia.")
         } else {
-            val perBand = evs.groupBy { it.band }.entries.joinToString("  ") { "${it.key}:${it.value.size}" }
+            val perBand = evs.groupBy { it.band }.entries.joinToString("  ") { "${cfg.channelLabel(it.key)}:${it.value.size}" }
             lines.append("Eventi: ${evs.size}  ($perBand)")
         }
         val nowS = System.currentTimeMillis() / 1000
         for ((band, since) in st.activeBands) {
-            lines.append("\n● $band sopra soglia da ${fmtDur(nowS - since)}")
+            lines.append("\n● ${cfg.channelLabel(band)} sopra soglia da ${fmtDur(nowS - since)}")
         }
         val top = st.levels.maxByOrNull { it.value }
         if (top != null) {
-            lines.append("\nLivello ${top.key}: ${"%.1f".format(top.value)} dBFS")
+            lines.append("\nLivello ${cfg.channelLabel(top.key)}: ${"%.1f".format(top.value)} dBFS")
         }
         lines.append("\nSorgente ${st.audioSource}")
         st.batteryPct?.let { lines.append(" · Batteria $it%") }

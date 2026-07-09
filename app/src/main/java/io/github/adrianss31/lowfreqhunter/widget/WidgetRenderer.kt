@@ -22,6 +22,7 @@ object WidgetRenderer {
 
     data class Ch(
         val id: String,
+        val label: String,      // etichetta visibile: frequenza o "VIB"
         val color: Int,
         val levelFrac: Float,   // 0..1
         val thrFrac: Float,     // 0..1
@@ -214,10 +215,10 @@ object WidgetRenderer {
                         4 * d, 4 * d, stroke,
                     )
                 }
-                // etichetta + dB
+                // etichetta (frequenza) + dB
                 val above = ch.levelFrac >= ch.thrFrac
-                val letterP = text(if (compact) 9 * d else 11 * d, if (above || ch.active) ch.color else DIM, doto, 0.1f)
-                c.drawText(ch.id, cx - letterP.measureText(ch.id) / 2, bottom + (if (compact) 12 * d else 16 * d), letterP)
+                val letterP = text(if (compact) 9 * d else 11 * d, if (above || ch.active) ch.color else DIM, doto, 0.05f)
+                c.drawText(ch.label, cx - letterP.measureText(ch.label) / 2, bottom + (if (compact) 12 * d else 16 * d), letterP)
                 if (!compact) {
                     val db = (-120 + 120 * ch.levelFrac).toInt()
                     val dbP = text(8.5f * d, if (above) ch.color else FAINT)

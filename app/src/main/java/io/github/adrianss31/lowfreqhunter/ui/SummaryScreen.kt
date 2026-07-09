@@ -1,11 +1,14 @@
 package io.github.adrianss31.lowfreqhunter.ui
 
+import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.widget.Toast
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,7 +32,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,8 +46,6 @@ import io.github.adrianss31.lowfreqhunter.data.SessionBundle
 import io.github.adrianss31.lowfreqhunter.data.deleteSessionData
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
-import io.github.adrianss31.lowfreqhunter.ui.Render.drawTimelineDark
-import io.github.adrianss31.lowfreqhunter.ui.Render.drawWaterfallSlices
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -94,7 +99,8 @@ fun SummaryScreen() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(s.label, color = Lfh.Text, fontSize = 14.sp, fontFamily = MonoFont)
-                            val dur = s.endedAt?.let { fmtDur((it - s.startedAt) / 1000) } ?: "in corso"
+                            val endMs = s.endedAt ?: (s.lastT * 1000)
+                            val dur = if (inCorso) "in corso" else fmtDur((endMs - s.startedAt) / 1000)
                             CapsLabel(
                                 "$dur · ${s.audioSource}" +
                                     (if (s.recovered) " · recuperata" else "") +
@@ -114,6 +120,24 @@ fun SummaryScreen() {
     // ── dettaglio sessione ───────────────────────────────────────────────────
     var confirmDelete by remember { mutableStateOf(false) }
 
+    // Timeline e spettrogramma renderizzati una sola volta come bitmap: lo
+    // scroll non ridisegna più nulla (fix lentezza con notti intere).
+    val density = LocalDensity.current.density
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val contentPx = ((screenWidthDp - 44) * density).toInt().coerceIn(320, 1400)
+    var timelineBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+    var waterfallBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(b.session.id) {
+        withContext(Dispatchers.Default) {
+            val tl = BitmapRender.timeline(b, contentPx, (200 * density).toInt(), density)
+            val wf = if (b.slices.isNotEmpty()) BitmapRender.waterfall(b, contentPx, (110 * density).toInt(), density) else null
+            withContext(Dispatchers.Main) {
+                timelineBmp = tl
+                waterfallBmp = wf
+            }
+        }
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -132,40 +156,47 @@ fun SummaryScreen() {
         Panel(Modifier.fillMaxWidth()) {
             CapsLabel("Timeline")
             Spacer(Modifier.height(6.dp))
-            Canvas(
-                Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-            ) { drawTimelineDark(b) }
+            val tl = timelineBmp
+            if (tl != null) {
+                Image(
+                    tl.asImageBitmap(),
+                    contentDescription = "Timeline della sessione",
+                    modifier = Modifier.fillMaxWidth().height(200.dp),
+                    contentScale = ContentScale.FillBounds,
+                )
+            } else {
+                Box(Modifier.fillMaxWidth().height(200.dp).background(Lfh.Bg))
+            }
         }
 
         if (b.slices.isNotEmpty()) {
             Panel(Modifier.fillMaxWidth()) {
                 CapsLabel("Spettrogramma · 20–200 Hz")
                 Spacer(Modifier.height(6.dp))
-                Canvas(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(110.dp)
-                ) {
-                    drawWaterfallSlices(
-                        b.slices.map { Pair(it.t, it.bins) },
-                        b.cfg.enabledBands().map { Pair(it.center, Lfh.bandColor(it.id)) },
+                val wf = waterfallBmp
+                if (wf != null) {
+                    Image(
+                        wf.asImageBitmap(),
+                        contentDescription = "Spettrogramma della sessione",
+                        modifier = Modifier.fillMaxWidth().height(110.dp),
+                        contentScale = ContentScale.FillBounds,
                     )
+                } else {
+                    Box(Modifier.fillMaxWidth().height(110.dp).background(Lfh.Bg))
                 }
             }
         }
 
         // statistiche
         Panel(Modifier.fillMaxWidth()) {
-            val totalS = b.session.endedAt?.let { (it - b.session.startedAt) / 1000 } ?: 0L
+            val endMs = b.session.endedAt ?: (b.samples.lastOrNull()?.t?.times(1000) ?: b.session.startedAt)
+            val totalS = (endMs - b.session.startedAt) / 1000
             val noisyS = b.events.sumOf { it.durationS }
             val longest = b.events.maxOfOrNull { it.durationS } ?: 0L
             val peak = b.events.mapNotNull { it.peakDb }.maxOrNull()
             val gapS = b.gaps.sumOf { it.durationS }
-            val perBand = b.events.groupBy { it.band }.entries.joinToString("  ") { "${it.key}:${it.value.size}" }
             StatRow("Durata", fmtDur(totalS))
-            StatRow("Eventi", "${b.events.size}" + if (perBand.isNotEmpty()) "  ($perBand)" else "")
+            StatRow("Eventi totali", "${b.events.size}")
             StatRow("Tempo sopra soglia", fmtDur(noisyS))
             StatRow("Evento più lungo", fmtDur(longest))
             StatRow("Picco max", peak?.let { "%.1f dBFS".format(it) } ?: "—")
@@ -173,44 +204,64 @@ fun SummaryScreen() {
             if (gapS > 0) StatRow("⚠ Monitoraggio interrotto", "${fmtDur(gapS)} (${b.gaps.size} gap)", Lfh.Amber)
         }
 
-        // eventi
+        // eventi raggruppati per frequenza (una sezione per banda)
         Panel(Modifier.fillMaxWidth()) {
-            CapsLabel("Eventi")
-            Spacer(Modifier.height(6.dp))
-            if (b.events.isEmpty() && b.gaps.isEmpty()) {
+            CapsLabel("Eventi per frequenza")
+            Spacer(Modifier.height(8.dp))
+            if (b.events.isEmpty()) {
                 Text("Nessun evento sopra soglia.", color = Lfh.TextDim, fontSize = 12.sp)
             }
-            var n = 0
-            for (ev in (b.events + b.gaps).sortedBy { it.startT }) {
-                if (ev.band == Channels.GAP) {
-                    Text(
-                        "—  ${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}  gap",
-                        color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
-                        modifier = Modifier.padding(vertical = 3.dp),
-                    )
-                } else {
-                    n++
-                    Row(Modifier.padding(vertical = 3.dp)) {
+            val groups = b.events.groupBy { it.band }
+                .toList()
+                .sortedBy { (id, _) -> b.cfg.channelSortKey(id) }
+            groups.forEachIndexed { gi, (id, evs) ->
+                val color = if (id == Channels.VIB) Lfh.VibColor else Lfh.bandColor(id)
+                val tot = evs.sumOf { it.durationS }
+                if (gi > 0) Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(10.dp).height(10.dp).background(color))
+                    Spacer(Modifier.width(8.dp))
+                    Text(b.cfg.channelLabel(id), color = color, fontSize = 15.sp, fontFamily = DotFont)
+                    Spacer(Modifier.weight(1f))
+                    CapsLabel("${evs.size} eventi · ${fmtDur(tot)} attivo", color = Lfh.TextDim)
+                }
+                Spacer(Modifier.height(4.dp))
+                for (ev in evs.sortedBy { it.startT }) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 18.dp, top = 3.dp, bottom = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            "%2d".format(n), color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
-                            modifier = Modifier.width(26.dp),
-                        )
-                        Text(
-                            ev.band,
-                            color = if (ev.band == Channels.VIB) Lfh.VibColor else Lfh.bandColor(ev.band),
-                            fontSize = 12.sp, fontFamily = MonoFont,
-                            modifier = Modifier.width(22.dp),
-                        )
-                        Text(
-                            "${fmtClock(ev.startT * 1000)}–${fmtClock(ev.endT * 1000)}  ${fmtDur(ev.durationS)}",
+                            "${fmtClock(ev.startT * 1000)} → ${fmtClock(ev.endT * 1000)}",
                             color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            ev.peakDb?.let { "%.1f".format(it) } ?: "—",
+                            fmtDur(ev.durationS),
                             color = Lfh.TextDim, fontSize = 12.sp, fontFamily = MonoFont,
+                            modifier = Modifier.width(62.dp),
+                        )
+                        Text(
+                            ev.peakDb?.let { "%.1f".format(it) } ?: "—",
+                            color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
+                            modifier = Modifier.width(48.dp),
                         )
                     }
+                }
+            }
+        }
+
+        // interruzioni di monitoraggio (gap)
+        if (b.gaps.isNotEmpty()) {
+            Panel(Modifier.fillMaxWidth()) {
+                CapsLabel("Interruzioni monitoraggio")
+                Spacer(Modifier.height(6.dp))
+                for (g in b.gaps.sortedBy { it.startT }) {
+                    Text(
+                        "${fmtClock(g.startT * 1000)} → ${fmtClock(g.endT * 1000)} · ${fmtDur(g.durationS)}",
+                        color = Lfh.TextFaint, fontSize = 12.sp, fontFamily = MonoFont,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
                 }
             }
         }
@@ -238,7 +289,7 @@ fun SummaryScreen() {
                 for (clip in b.clips) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
                         Text(
-                            "${clip.band}  ${fmtClock(clip.t * 1000)}",
+                            "${b.cfg.channelLabel(clip.band)}  ${fmtClock(clip.t * 1000)}",
                             color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
                             modifier = Modifier.weight(1f),
                         )

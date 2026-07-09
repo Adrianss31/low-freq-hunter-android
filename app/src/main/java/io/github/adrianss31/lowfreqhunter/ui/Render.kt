@@ -90,7 +90,7 @@ object Render {
             if (x0 > w) continue
             drawRect(c.copy(alpha = 0.10f), Offset(x0, 0f), Size(maxOf(x1 - x0, 2f), h))
             drawLine(c, Offset(x0, yOf(b.thr)), Offset(minOf(x1, w), yOf(b.thr)), strokeWidth = 4f)
-            label(b.id, x0 + 4f, 26f, c)
+            label("${b.center.toInt()}", x0 + 4f, 26f, c)
         }
         // curva spettro
         val maxBin = minOf((xMaxHz / binHz).toInt(), spec.size - 1)
@@ -151,9 +151,11 @@ object Render {
     }
 
     /**
-     * Timeline sessione (tema scuro): corsie evento per canale in alto,
-     * curve dei livelli sotto, soglie tratteggiate, gap grigi, marker bianchi.
+     * (Non più usata dalla UI: il dettaglio sessione ora renderizza la
+     * timeline come bitmap statico — vedi BitmapRender. Tenuta come
+     * riferimento del layout in DrawScope.)
      */
+    @Suppress("unused")
     fun DrawScope.drawTimelineDark(b: io.github.adrianss31.lowfreqhunter.data.SessionBundle) {
         val w = size.width
         val h = size.height

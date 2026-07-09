@@ -120,7 +120,7 @@ fun NightScreen() {
             val channels = enabled.map { it.id } + if (settings.engine.vib.enabled) listOf(Channels.VIB) else emptyList()
             for (ch in channels) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    CapsLabel(ch, Modifier.width(20.dp))
+                    CapsLabel(settings.engine.channelLabel(ch), Modifier.width(52.dp))
                     Canvas(
                         Modifier
                             .weight(1f)
@@ -166,7 +166,7 @@ fun NightScreen() {
             for (b in enabled) {
                 val lvl = bus.levels[b.id] ?: -120.0
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    CapsLabel(b.id, Modifier.width(20.dp))
+                    CapsLabel(b.label, Modifier.width(52.dp))
                     SegMeter(
                         frac = ((lvl + 120.0) / 120.0).toFloat(),
                         color = Lfh.bandColor(b.id),
@@ -184,7 +184,7 @@ fun NightScreen() {
             }
             if (settings.engine.vib.enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    CapsLabel("V", Modifier.width(20.dp))
+                    CapsLabel("Vibraz.", Modifier.width(52.dp))
                     SegMeter(
                         frac = (((bus.vibDb ?: -120.0) + 120.0) / 120.0).toFloat(),
                         color = Lfh.VibColor,

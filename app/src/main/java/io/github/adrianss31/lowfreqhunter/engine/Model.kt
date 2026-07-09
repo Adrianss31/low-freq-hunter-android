@@ -13,7 +13,8 @@ data class BandCfg(
 ) {
     val lo: Double get() = maxOf(1.0, center - width)
     val hi: Double get() = center + width
-    val label: String get() = "$id · ${center.toInt()} Hz ±${width.toInt()}"
+    val label: String get() = "${center.toInt()} Hz"
+    val labelWide: String get() = "${center.toInt()} Hz ±${width.toInt()}"
 }
 
 /** Canale vibrazioni da accelerometro ("V"). Livelli in dB rel 1 g. */
@@ -42,6 +43,29 @@ data class EngineCfg(
 ) {
     fun band(id: String): BandCfg? = bands.find { it.id == id }
     fun enabledBands(): List<BandCfg> = bands.filter { it.enabled }
+
+    // Nome visibile di un canale (banda audio, vibrazioni o gap): mai la
+    // lettera interna — sempre la frequenza. Vale anche per gli id salvati
+    // nelle sessioni vecchie, risolti sulla cfg snapshot della sessione.
+    fun channelLabel(id: String): String = when (id) {
+        Channels.VIB -> "Vibraz."
+        Channels.GAP -> "gap"
+        else -> band(id)?.let { "${it.center.toInt()} Hz" } ?: id
+    }
+
+    /** Versione compatta per spazi stretti (widget, assi): solo il numero. */
+    fun channelShort(id: String): String = when (id) {
+        Channels.VIB -> "VIB"
+        Channels.GAP -> "gap"
+        else -> band(id)?.let { "${it.center.toInt()}" } ?: id
+    }
+
+    /** Ordina i canali per frequenza crescente; vibrazioni in fondo. */
+    fun channelSortKey(id: String): Double = when (id) {
+        Channels.VIB -> Double.MAX_VALUE
+        Channels.GAP -> Double.MAX_VALUE - 1
+        else -> band(id)?.center ?: 1e8
+    }
 }
 
 /** Id speciali usati nel campo band degli eventi. */

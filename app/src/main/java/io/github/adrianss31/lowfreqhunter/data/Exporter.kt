@@ -186,8 +186,8 @@ object Exporter {
         val endStr = s.endedAt?.let { "${fmtDate(it)} ${fmtClock(it)}" } ?: "—"
         val durStr = s.endedAt?.let { fmtDur((it - s.startedAt) / 1000) } ?: "—"
         val bandsStr = b.cfg.enabledBands().joinToString("   ·   ") {
-            "${it.id}: ${it.center.toInt()}±${it.width.toInt()} Hz @ ${it.thr.toInt()} dBFS"
-        } + if (b.cfg.vib.enabled) "   ·   V: accel @ ${b.cfg.vib.thr.toInt()} dB(g)" else ""
+            "${it.center.toInt()} Hz ±${it.width.toInt()} @ ${it.thr.toInt()} dBFS"
+        } + if (b.cfg.vib.enabled) "   ·   Vibraz.: accel @ ${b.cfg.vib.thr.toInt()} dB(g)" else ""
         val lines = listOf(
             "Sessione: ${s.label}     Inizio: ${fmtDate(s.startedAt)} ${fmtClock(s.startedAt)}     Fine: $endStr     Durata: $durStr",
             "Canali: $bandsStr",
@@ -229,13 +229,13 @@ object Exporter {
             } else {
                 n++
                 c.drawText(
-                    "${n.toString().padEnd(4)} ${ev.band.padEnd(7)} ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${
+                    "${n.toString().padEnd(4)} ${b.cfg.channelLabel(ev.band).padEnd(8)} ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${
                         fmtDur(ev.durationS).padEnd(10)
                     }  ${(ev.peakDb?.let { "%.1f".format(it) } ?: "—").padEnd(11)} ${ev.avgDb?.let { "%.1f".format(it) } ?: "—"}",
                     30f, ry, mono,
                 )
                 val p = Paint().apply { color = Palette.bandColorInt(ev.band) }
-                c.drawRect(64f, ry - 11f, 74f, ry - 1f, p)
+                c.drawRect(47f, ry - 9f, 55f, ry - 1f, p)
             }
         }
         if (b.events.size + b.gaps.size > 28) {

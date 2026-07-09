@@ -221,7 +221,7 @@ fun LiveScreen() {
                 DotValue(fmtDb(selLevel), color = if ((selLevel ?: -120.0) >= (settings.engine.band(selBand ?: "")?.thr ?: 0.0)) Lfh.Rec else Lfh.Accent, size = 46)
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    CapsLabel("dBFS · ${selBand ?: "—"}")
+                    CapsLabel("dBFS · ${selBand?.let { settings.engine.channelLabel(it) } ?: "—"}")
                     CapsLabel("picco ${fmtDb(peak)}", color = Lfh.TextFaint)
                 }
             }
@@ -246,7 +246,7 @@ fun LiveScreen() {
             }
             if (serviceRunning && settings.engine.vib.enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
-                    CapsLabel("V · vibrazioni", Modifier.width(96.dp))
+                    CapsLabel("Vibrazioni", Modifier.width(96.dp))
                     SegMeter(
                         frac = (((bus.vibDb ?: -120.0) + 120.0) / 120.0).toFloat(),
                         color = Lfh.VibColor,
@@ -262,7 +262,7 @@ fun LiveScreen() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (b in enabled) {
                 HwButton(
-                    b.id,
+                    b.label,
                     color = if (b.id == selBand) Lfh.Bg else Lfh.bandColor(b.id),
                     borderColor = Lfh.bandColor(b.id),
                     bg = if (b.id == selBand) Lfh.bandColor(b.id) else Lfh.Surface,

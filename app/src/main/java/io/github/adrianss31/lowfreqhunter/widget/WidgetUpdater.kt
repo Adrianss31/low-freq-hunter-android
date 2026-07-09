@@ -62,6 +62,7 @@ object WidgetUpdater {
             channels.add(
                 WidgetRenderer.Ch(
                     id = b.id,
+                    label = "${b.center.toInt()}",
                     color = Palette.bandColorInt(b.id),
                     levelFrac = (((lv + 120.0) / 120.0).coerceIn(0.0, 1.0)).toFloat(),
                     thrFrac = (((b.thr + 120.0) / 120.0).coerceIn(0.0, 1.0)).toFloat(),
@@ -74,6 +75,7 @@ object WidgetUpdater {
             channels.add(
                 WidgetRenderer.Ch(
                     id = Channels.VIB,
+                    label = "VIB",
                     color = Palette.VIB,
                     levelFrac = (((lv + 120.0) / 120.0).coerceIn(0.0, 1.0)).toFloat(),
                     thrFrac = (((settings.engine.vib.thr + 120.0) / 120.0).coerceIn(0.0, 1.0)).toFloat(),
