@@ -112,6 +112,9 @@ interface LfhDao {
     @Query("SELECT * FROM sessions ORDER BY startedAt DESC")
     fun sessionsFlow(): Flow<List<SessionEntity>>
 
+    @Query("SELECT * FROM sessions ORDER BY startedAt DESC")
+    suspend fun sessionsList(): List<SessionEntity>
+
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun session(id: String): SessionEntity?
 
@@ -148,6 +151,19 @@ interface LfhDao {
 
     @Query("SELECT * FROM clips WHERE sessionId = :id ORDER BY t")
     suspend fun clips(id: String): List<ClipEntity>
+
+    // letture incrementali per il server LAN (polling con ?since=)
+    @Query("SELECT * FROM samples WHERE sessionId = :id AND t > :sinceT ORDER BY t")
+    suspend fun samplesSince(id: String, sinceT: Long): List<SampleEntity>
+
+    @Query("SELECT * FROM events WHERE sessionId = :id AND endT > :sinceT ORDER BY startT")
+    suspend fun eventsSince(id: String, sinceT: Long): List<EventEntity>
+
+    @Query("SELECT * FROM slices WHERE sessionId = :id AND t > :sinceT ORDER BY t")
+    suspend fun slicesSince(id: String, sinceT: Long): List<SliceEntity>
+
+    @Query("SELECT * FROM markers WHERE sessionId = :id AND t > :sinceT ORDER BY t")
+    suspend fun markersSince(id: String, sinceT: Long): List<MarkerEntity>
 
     // rilievi (mappa casa)
     @Insert(onConflict = OnConflictStrategy.REPLACE)

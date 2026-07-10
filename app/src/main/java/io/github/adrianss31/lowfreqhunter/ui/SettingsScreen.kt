@@ -47,6 +47,12 @@ import kotlinx.coroutines.launch
 
 private const val MAX_BANDS = 8
 
+/** Token breve per l'URL della dashboard LAN (non è crittografia, è un lucchetto). */
+private fun randomToken(): String {
+    val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return (1..6).map { chars.random() }.joinToString("")
+}
+
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
@@ -211,6 +217,45 @@ fun SettingsScreen() {
                         onMinus = { upd { it.copy(schedule = it.schedule.copy(endMin = (it.schedule.endMin - 15 + 1440) % 1440)) } },
                         onPlus = { upd { it.copy(schedule = it.schedule.copy(endMin = (it.schedule.endMin + 15) % 1440)) } },
                     )
+                }
+            }
+        }
+
+        // monitor dal PC (server LAN)
+        CapsLabel("Monitor dal PC", color = Lfh.Text)
+        Panel(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Server sulla rete di casa", color = Lfh.Text, fontSize = 14.sp)
+                    CapsLabel("dashboard live nel browser del PC mentre registra", color = Lfh.TextFaint)
+                }
+                HwSwitch(settings.lan.enabled) {
+                    upd {
+                        val token = it.lan.token.ifBlank { randomToken() }
+                        it.copy(lan = it.lan.copy(enabled = !it.lan.enabled, token = token))
+                    }
+                }
+            }
+            if (settings.lan.enabled) {
+                Spacer(Modifier.height(8.dp))
+                val url = bus.lanUrl ?: io.github.adrianss31.lowfreqhunter.server.LanServer.deviceIp()
+                    ?.let { ip -> "http://$ip:${settings.lan.port}/?k=${settings.lan.token}" }
+                if (url != null) {
+                    Text(url, color = Lfh.Accent, fontSize = 13.sp, fontFamily = MonoFont)
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CapsLabel(
+                            if (bus.running) "server attivo — apri l'indirizzo sul PC" else "il server parte insieme al monitoraggio",
+                            Modifier.weight(1f),
+                            color = if (bus.running) Lfh.Accent else Lfh.TextFaint,
+                        )
+                        HwButton("copia") {
+                            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("lfh", url))
+                        }
+                    }
+                } else {
+                    CapsLabel("telefono non connesso al Wi-Fi", color = Lfh.Amber)
                 }
             }
         }

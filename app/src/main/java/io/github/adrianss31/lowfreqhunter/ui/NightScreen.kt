@@ -97,6 +97,15 @@ fun NightScreen() {
             return@Column
         }
 
+        // dashboard PC (server LAN attivo)
+        bus.lanUrl?.let { url ->
+            Panel(Modifier.fillMaxWidth()) {
+                CapsLabel("Monitor dal PC — apri nel browser:")
+                Spacer(Modifier.height(4.dp))
+                Text(url, color = Lfh.Accent, fontSize = 13.sp, fontFamily = MonoFont)
+            }
+        }
+
         // waterfall della sessione
         Panel(Modifier.fillMaxWidth()) {
             CapsLabel("Spettrogramma · 20–200 Hz · tutta la sessione")

@@ -22,6 +22,7 @@ object MonitorBus {
         val domHz: Double = 0.0,
         val audioSource: String = "",
         val batteryPct: Int? = null,
+        val lanUrl: String? = null,   // dashboard PC, se il server LAN è attivo
     )
 
     class SpectrumFrame(val spec: FloatArray, val binHz: Double, val t: Long)

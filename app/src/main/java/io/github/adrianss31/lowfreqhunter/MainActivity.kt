@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -79,7 +79,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Root() {
-    var tab by remember { mutableIntStateOf(1) } // parte su NOTTE
+    // saveable: sopravvive comunque alla ricreazione dell'activity
+    var tab by rememberSaveable { mutableIntStateOf(1) } // parte su NOTTE
     Column(
         Modifier
             .fillMaxSize()

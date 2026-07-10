@@ -70,5 +70,8 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
+    // server LAN per monitorare dal PC (dashboard su http://telefono:8765)
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     testImplementation("junit:junit:4.13.2")
 }

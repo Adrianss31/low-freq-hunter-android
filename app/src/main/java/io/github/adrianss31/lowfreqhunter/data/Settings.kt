@@ -19,12 +19,21 @@ data class ScheduleCfg(
     val endMin: Int = 7 * 60,      // 07:00
 )
 
+/** Server LAN: dashboard consultabile dal PC mentre il telefono registra. */
+@Serializable
+data class LanCfg(
+    val enabled: Boolean = false,
+    val port: Int = 8765,
+    val token: String = "",        // generato al primo enable; vuoto = nessun accesso
+)
+
 @Serializable
 data class AppSettings(
     val engine: EngineCfg = EngineCfg(),
     val specXMax: Int = 250,       // asse X spettro live (Hz)
     val sonify: Boolean = false,
     val schedule: ScheduleCfg = ScheduleCfg(),
+    val lan: LanCfg = LanCfg(),
 )
 
 private val Context.dataStore by preferencesDataStore(name = "lfh-settings")

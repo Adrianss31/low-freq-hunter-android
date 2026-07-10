@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Low-Freq Hunter · monitor</title>
+<style>
+  :root{
+    --bg:#0a0a0c; --surface:#141418; --surface2:#1c1c22; --border:#2a2a30;
+    --text:#e8e8ee; --dim:#8a8a96; --faint:#5a5a64;
+    --accent:#00d4aa; --rec:#ff4455; --amber:#ffaa00; --vib:#ddddE4;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:ui-monospace,'Cascadia Mono','JetBrains Mono',Menlo,monospace;
+       font-size:13px;padding:14px;max-width:1500px;margin:0 auto}
+  .caps{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
+  .panel{background:var(--surface);border:1px solid var(--border);padding:12px;margin-bottom:12px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+  header h1{font-size:16px;font-weight:600;letter-spacing:2px}
+  .badge{padding:3px 10px;font-size:11px;letter-spacing:1.5px;border:1px solid var(--border)}
+  .badge.rec{color:var(--rec);border-color:var(--rec)}
+  .badge.listen{color:var(--amber);border-color:var(--amber)}
+  .badge.off{color:var(--faint)}
+  .badge.online{color:var(--accent);border-color:var(--accent)}
+  #hdrinfo{color:var(--dim)}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:12px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  canvas{display:block;width:100%;background:#000}
+  .meter{display:flex;align-items:center;gap:8px;margin:7px 0}
+  .meter .lbl{width:64px;font-size:12px}
+  .meter .bar{flex:1;height:14px;background:var(--surface2);position:relative;overflow:hidden}
+  .meter .fill{position:absolute;left:0;top:0;bottom:0;width:0%}
+  .meter .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff8}
+  .meter .val{width:60px;text-align:right;font-size:12px;color:var(--dim)}
+  .meter .val.hot{color:var(--rec)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td,th{padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+  th{color:var(--dim);font-weight:400;font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+  button,select{background:var(--surface2);color:var(--text);border:1px solid var(--border);
+       font-family:inherit;font-size:12px;letter-spacing:1px;padding:9px 16px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.big{width:100%;color:var(--amber);border-color:var(--amber);font-size:13px;padding:12px}
+  #tip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--border);
+       padding:6px 9px;font-size:12px;display:none;z-index:9;white-space:pre}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .kv{color:var(--dim)} .kv b{color:var(--text);font-weight:600}
+  a{color:var(--accent)}
+  label.chk{color:var(--dim);font-size:12px;cursor:pointer;user-select:none}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
+  .dot.on{background:var(--accent)} .dot.err{background:var(--rec)}
+</style>
+</head>
+<body>
+<header>
+  <h1>LOW-FREQ HUNTER</h1>
+  <span id="stbadge" class="badge off">—</span>
+  <span id="conn"><span class="dot" id="conndot"></span><span id="conntxt" class="caps">connessione…</span></span>
+  <span id="hdrinfo"></span>
+  <span style="flex:1"></span>
+  <span class="row">
+    <span class="caps">sessione</span>
+    <select id="sessel"><option value="live">● LIVE</option></select>
+  </span>
+</header>
+
+<div class="grid">
+  <div>
+    <div class="panel" id="livepanel">
+      <div class="caps">Segnale adesso</div>
+      <div style="margin:10px 0 4px;display:flex;align-items:baseline;gap:8px">
+        <span id="domhz" style="font-size:30px;color:var(--accent)">—</span>
+        <span class="caps">hz dominante</span>
+        <span style="flex:1"></span><span id="activetxt" class="caps"></span>
+      </div>
+      <div id="meters"></div>
+      <div style="margin-top:12px" class="row">
+        <button class="big" id="markerbtn" style="flex:1">▲ LO SENTO ADESSO (marker)</button>
+      </div>
+      <div style="margin-top:10px" class="row">
+        <label class="chk"><input type="checkbox" id="beep"> beep sugli eventi</label>
+        <label class="chk"><input type="checkbox" id="notif"> notifiche desktop</label>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="caps" style="margin-bottom:8px">Statistiche</div>
+      <div id="stats" class="kv" style="line-height:1.9"></div>
+      <div id="exports" style="margin-top:8px;font-size:12px"></div>
+    </div>
+    <div class="panel">
+      <div class="caps" style="margin-bottom:6px">Eventi <span id="evcount"></span></div>
+      <div style="max-height:340px;overflow-y:auto">
+        <table><thead><tr><th>banda</th><th>inizio → fine</th><th>durata</th><th>picco</th></tr></thead>
+        <tbody id="evrows"></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="panel">
+      <div class="caps">Spettro · 0–250 Hz <span id="specinfo" style="float:right"></span></div>
+      <canvas id="spec" height="240" style="margin-top:8px"></canvas>
+    </div>
+    <div class="panel">
+      <div class="caps">Spettrogramma · 20–200 Hz · tutta la sessione</div>
+      <canvas id="wf" height="300" style="margin-top:8px;cursor:crosshair"></canvas>
+    </div>
+    <div class="panel">
+      <div class="caps">Livelli · −85…−45 dBFS</div>
+      <canvas id="chart" height="260" style="margin-top:8px;cursor:crosshair"></canvas>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+'use strict';
+const K = new URLSearchParams(location.search).get('k') || '';
+const api = p => fetch(p + (p.includes('?') ? '&' : '?') + 'k=' + K).then(r => { if(!r.ok) throw 0; return r.json(); });
+
+const BAND_COLORS = ['#ffaa00','#00d4aa','#9988ff','#ff6688','#55aaff','#aaee44','#ff8844','#44ddee'];
+const bandColor = id => id === 'V' ? '#ddddE4' : BAND_COLORS[((id.charCodeAt(0)-65)%8+8)%8];
+const WF_STOPS = [[5,10,30],[30,20,90],[120,30,130],[210,60,120],[255,140,50],[255,220,100],[255,255,235]];
+function wfColor(v){ v=Math.max(0,Math.min(1,v))*(WF_STOPS.length-1);
+  const i=Math.min(Math.floor(v),WF_STOPS.length-2), f=v-i, a=WF_STOPS[i], b=WF_STOPS[i+1];
+  return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`; }
+const Q_MIN=-110, Q_MAX=-20, WF_FMIN=20, WF_FMAX=200;
+const fmtT = s => new Date(s*1000).toLocaleTimeString('it-IT');
+const fmtDur = s => { s=Math.max(0,s|0); const h=s/3600|0,m=(s%3600)/60|0;
+  return h>0?`${h}h ${String(m).padStart(2,'0')}m`:(m>0?`${m}m ${String(s%60).padStart(2,'0')}s`:`${s}s`); };
+const el = id => document.getElementById(id);
+
+// ── stato applicazione ─────────────────────────────────────────────────────
+let cfg=null, state=null, viewing='live';
+let S={samples:[],events:[],gaps:[],markers:[],slices:[],sessionId:null,startedAt:0,label:'',endedAt:null};
+
+// ── connessione ────────────────────────────────────────────────────────────
+function setConn(ok){ el('conndot').className='dot '+(ok?'on':'err');
+  el('conntxt').textContent = ok ? 'in linea' : 'telefono non raggiungibile'; }
+
+// ── polling live ───────────────────────────────────────────────────────────
+async function pollState(){
+  try{
+    state = await api('/api/state'); cfg = state.cfg; setConn(true);
+    renderHeader(); renderMeters();
+    document.title = (state.running ? (state.mode==='rec'?'● REC ':'◦ LIVE ') : '') +
+      state.eventsCount + ' ev · Low-Freq Hunter';
+  }catch(e){ setConn(false); }
+}
+async function pollSpectrum(){
+  if(viewing!=='live') return;
+  try{ const s = await api('/api/spectrum'); drawSpectrum(s); }catch(e){}
+}
+async function pollSession(){
+  if(viewing!=='live') return;
+  try{
+    const since = S.samples.length ? S.samples[S.samples.length-1].t : 0;
+    const d = await api('/api/session?since='+since);
+    if(!d.sessionId) return;
+    if(d.sessionId !== S.sessionId){ S={samples:[],events:[],gaps:[],markers:[],slices:[],sessionId:d.sessionId,startedAt:d.startedAt,label:'',endedAt:null}; }
+    mergeSession(d, since===0); redrawAll();   // primo load: niente beep sugli eventi vecchi
+  }catch(e){}
+}
+function mergeSession(d, silent){
+  S.samples.push(...(d.samples||[]));
+  const evKey = e=>e.band+e.startT+'_'+e.endT;
+  const known = new Set(S.events.map(evKey));
+  for(const e of (d.events||[])) if(!known.has(evKey(e))){ S.events.push(e); if(!silent) onNewEvent(e); }
+  const gk = new Set(S.gaps.map(g=>g.startT));
+  for(const g of (d.gaps||[])) if(!gk.has(g.startT)) S.gaps.push(g);
+  const mk = new Set(S.markers);
+  for(const m of (d.markers||[])) if(!mk.has(m)) S.markers.push(m);
+  const sk = new Set(S.slices.map(s=>s.t));
+  for(const s of (d.slices||[])) if(!sk.has(s.t)) S.slices.push({t:s.t, bins:Uint8Array.from(atob(s.b64),c=>c.charCodeAt(0))});
+}
+
+// ── QoL: beep e notifiche desktop sui nuovi eventi ─────────────────────────
+function onNewEvent(e){
+  if(el('beep').checked){ try{
+    const ac = new (window.AudioContext||window.webkitAudioContext)();
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.frequency.value=880; g.gain.value=0.08; o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime+0.18);
+  }catch(_){}}
+  if(el('notif').checked && Notification.permission==='granted'){
+    new Notification('Low-Freq Hunter — evento '+bandLabel(e.band),
+      {body:`${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`});
+  }
+}
+el('notif').addEventListener('change',()=>{ if(el('notif').checked) Notification.requestPermission(); });
+
+// ── header + meters ────────────────────────────────────────────────────────
+const bandLabel = id => { if(id==='V') return 'Vibraz.';
+  const b=(cfg?.bands||[]).find(b=>b.id===id); return b?b.label:id; };
+function renderHeader(){
+  const b=el('stbadge');
+  if(!state.running){ b.className='badge off'; b.textContent='FERMO'; }
+  else if(state.mode==='rec'){ b.className='badge rec'; b.textContent='● REC · '+fmtDur((state.now-state.startedAt)/1000); }
+  else { b.className='badge listen'; b.textContent='SOLO ASCOLTO · '+fmtDur((state.now-state.startedAt)/1000); }
+  el('hdrinfo').textContent = state.audioSource +
+    (state.batteryPct!=null ? ' · batteria tel. '+state.batteryPct+'%' : '') +
+    ' · '+state.eventsCount+' eventi';
+}
+function renderMeters(){
+  el('domhz').textContent = state.running ? state.domHz.toFixed(1) : '—';
+  const act = Object.entries(state.activeBands||{});
+  el('activetxt').textContent = act.length
+    ? '● sopra soglia da '+fmtDur(state.now/1000-Math.min(...act.map(a=>a[1]))) : 'silenzio';
+  el('activetxt').style.color = act.length ? 'var(--rec)' : 'var(--faint)';
+  const rows=[];
+  for(const b of (cfg?.bands||[])){
+    const lvl = state.levels?.[b.id];
+    rows.push(meterRow(b.label, bandColor(b.id), lvl, b.thr, b.id in (state.activeBands||{})));
+  }
+  if(cfg?.vibEnabled) rows.push(meterRow('Vibraz.', bandColor('V'), state.vibDb, cfg.vibThr, 'V' in (state.activeBands||{})));
+  el('meters').innerHTML = rows.join('');
+}
+function meterRow(label,color,lvl,thr,active){
+  const frac = Math.max(0,Math.min(1,((lvl??-120)+120)/120))*100;
+  const thrF = Math.max(0,Math.min(1,(thr+120)/120))*100;
+  const v = lvl==null?'—':lvl.toFixed(1);
+  return `<div class="meter"><span class="lbl" style="color:${color}">${label}</span>
+    <span class="bar"><span class="fill" style="width:${frac}%;background:${color}"></span>
+    <span class="thr" style="left:${thrF}%"></span></span>
+    <span class="val ${active?'hot':''}">${active?'● attiva':v}</span></div>`;
+}
+
+// ── marker remoto ──────────────────────────────────────────────────────────
+el('markerbtn').addEventListener('click', async ()=>{
+  try{ await fetch('/api/marker?k='+K,{method:'POST'}); el('markerbtn').textContent='▲ MARKER INVIATO';
+    setTimeout(()=>el('markerbtn').textContent='▲ LO SENTO ADESSO (marker)',1500); pollSession(); }
+  catch(e){ alert('marker non inviato: telefono non raggiungibile'); }
+});
+document.addEventListener('keydown',e=>{ if(e.key==='m'&&viewing==='live') el('markerbtn').click(); });
+
+// ── archivio sessioni ──────────────────────────────────────────────────────
+async function loadSessions(){
+  try{
+    const list = await api('/api/sessions');
+    const sel = el('sessel'); const cur = sel.value;
+    sel.innerHTML = '<option value="live">● LIVE</option>' +
+      list.filter(s=>!s.live).map(s=>`<option value="${s.id}">${s.label} · ${s.eventsCount} ev</option>`).join('');
+    sel.value = cur && [...sel.options].some(o=>o.value===cur) ? cur : 'live';
+  }catch(e){}
+}
+el('sessel').addEventListener('change', async ()=>{
+  viewing = el('sessel').value;
+  if(viewing==='live'){ S={samples:[],events:[],gaps:[],markers:[],slices:[],sessionId:null,startedAt:0,label:'',endedAt:null}; el('markerbtn').disabled=false; await pollSession(); return; }
+  el('markerbtn').disabled=true;
+  const d = await api('/api/session/'+viewing);
+  S={samples:d.samples||[],events:d.events||[],gaps:d.gaps||[],markers:d.markers||[],
+     slices:(d.slices||[]).map(s=>({t:s.t,bins:Uint8Array.from(atob(s.b64),c=>c.charCodeAt(0))})),
+     sessionId:d.sessionId,startedAt:d.startedAt,label:d.label||'',endedAt:d.endedAt};
+  if(d.cfg) cfg = {bands:(d.cfg.bands||[]).filter(b=>b.enabled!==false).map(b=>({id:b.id,center:b.center,lo:Math.max(1,b.center-b.width),hi:b.center+b.width,thr:b.thr,label:(b.center|0)+' Hz'})),
+                   vibEnabled:d.cfg.vib?.enabled, vibThr:d.cfg.vib?.thr};
+  redrawAll();
+});
+
+// ── statistiche + export + eventi ──────────────────────────────────────────
+function renderStats(){
+  const endS = S.endedAt ? S.endedAt/1000 : (S.samples.length? S.samples[S.samples.length-1].t : S.startedAt/1000);
+  const tot = endS - S.startedAt/1000;
+  const noisy = S.events.reduce((a,e)=>a+e.durationS,0);
+  const peak = S.events.reduce((a,e)=>Math.max(a,e.peakDb??-999),-999);
+  const gapS = S.gaps.reduce((a,g)=>a+(g.endT-g.startT),0);
+  el('stats').innerHTML =
+    `durata <b>${fmtDur(tot)}</b> · sopra soglia <b>${fmtDur(noisy)}</b><br>`+
+    `eventi <b>${S.events.length}</b> · marker <b>${S.markers.length}</b> · picco <b>${peak>-999?peak.toFixed(1)+' dBFS':'—'}</b>`+
+    (gapS>0?`<br><span style="color:var(--amber)">⚠ monitoraggio interrotto ${fmtDur(gapS)} (${S.gaps.length} gap)</span>`:'');
+  el('exports').innerHTML = S.sessionId ?
+    `<span class="caps">export:</span> <a href="/api/session/${S.sessionId}.json?k=${K}">json</a> ·
+     <a href="/api/session/${S.sessionId}/eventi.csv?k=${K}">eventi csv</a> ·
+     <a href="/api/session/${S.sessionId}/campioni.csv?k=${K}">campioni csv</a>` : '';
+}
+function renderEvents(){
+  el('evcount').textContent = S.events.length ? '· '+S.events.length : '';
+  el('evrows').innerHTML = [...S.events].sort((a,b)=>b.startT-a.startT).map(e=>
+    `<tr><td style="color:${bandColor(e.band)}">${bandLabel(e.band)}</td>
+     <td>${fmtT(e.startT)} → ${fmtT(e.endT)}</td><td>${fmtDur(e.durationS)}</td>
+     <td>${e.peakDb!=null?e.peakDb.toFixed(1):'—'}</td></tr>`).join('');
+}
+
+// ── canvas: DPI + tooltip ──────────────────────────────────────────────────
+function fitCanvas(c){
+  if(!c.dataset.h) c.dataset.h=c.getAttribute('height');   // altezza di progetto, salvata UNA volta
+  const H=+c.dataset.h, d=window.devicePixelRatio||1;
+  const r=c.getBoundingClientRect();
+  const wantW=Math.max(1,Math.round(r.width*d)), wantH=Math.round(H*d);
+  if(c.width!==wantW||c.height!==wantH){ c.width=wantW; c.height=wantH; c.style.height=H+'px'; }
+  const g=c.getContext('2d'); g.setTransform(d,0,0,d,0,0);
+  return [g,r.width,H]; }
+function tip(x,y,txt){ const t=el('tip'); if(!txt){t.style.display='none';return;}
+  t.textContent=txt; t.style.display='block';
+  t.style.left=Math.min(x+14,innerWidth-t.offsetWidth-8)+'px'; t.style.top=(y+14)+'px'; }
+
+// ── spettro ────────────────────────────────────────────────────────────────
+function drawSpectrum(s){
+  const [g,w,h]=fitCanvas(el('spec'));
+  g.fillStyle='#000'; g.fillRect(0,0,w,h);
+  if(!s.spec||!s.spec.length){ el('specinfo').textContent='(monitoraggio fermo)'; return; }
+  el('specinfo').textContent='';
+  const XMAX=250, DBMIN=-100, DBMAX=-20;
+  const xOf=f=>f/XMAX*w, yOf=db=>h-(Math.max(DBMIN,Math.min(DBMAX,db))-DBMIN)/(DBMAX-DBMIN)*h;
+  g.strokeStyle='#2a2a30'; g.fillStyle='#666'; g.font='10px monospace';
+  for(let db=DBMIN;db<=DBMAX;db+=20){ g.beginPath();g.moveTo(0,yOf(db));g.lineTo(w,yOf(db));g.stroke(); g.fillText(db,4,yOf(db)-3); }
+  for(let f=50;f<XMAX;f+=50){ g.beginPath();g.moveTo(xOf(f),0);g.lineTo(xOf(f),h);g.stroke(); g.fillText(f,xOf(f)+3,h-5); }
+  for(const b of (cfg?.bands||[])){
+    const c=bandColor(b.id);
+    g.fillStyle=c+'22'; g.fillRect(xOf(b.lo),0,Math.max(xOf(b.hi)-xOf(b.lo),2),h);
+    g.strokeStyle=c; g.lineWidth=2.5; g.beginPath(); g.moveTo(xOf(b.lo),yOf(b.thr)); g.lineTo(xOf(b.hi),yOf(b.thr)); g.stroke();
+    g.fillStyle=c; g.fillText(b.center|0, xOf(b.lo)+3, 12);
+  }
+  g.strokeStyle='#00d4aa'; g.lineWidth=1.6; g.beginPath();
+  const n=Math.min(s.spec.length,Math.floor(XMAX/s.binHz));
+  for(let i=0;i<n;i++){ const x=xOf(i*s.binHz), y=yOf(s.spec[i]); i?g.lineTo(x,y):g.moveTo(x,y); }
+  g.stroke(); g.lineWidth=1;
+}
+
+// ── waterfall ──────────────────────────────────────────────────────────────
+const WF_GUTTER=40;
+function drawWaterfall(){
+  const [g,w,h]=fitCanvas(el('wf'));
+  g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
+  g.fillStyle='#000'; g.fillRect(WF_GUTTER,0,w-WF_GUTTER,h);
+  const sl=S.slices; if(!sl.length) return;
+  let lo=255,hi=0;
+  for(const s of sl) for(const v of s.bins){ if(v<lo)lo=v; if(v>hi)hi=v; }
+  if(hi-lo<20) hi=lo+20;
+  const cols=Math.max(sl.length,60), colW=(w-WF_GUTTER)/cols, nB=sl[0].bins.length, rowH=h/nB;
+  for(let xi=0;xi<sl.length;xi++){ const x=WF_GUTTER+xi*colW;
+    for(let b=0;b<nB;b++){ g.fillStyle=wfColor((sl[xi].bins[b]-lo)/(hi-lo));
+      g.fillRect(x,h-(b+1)*rowH,colW+1,rowH+1); } }
+  g.font='10px monospace';
+  for(const b of (cfg?.bands||[])){
+    const y=h-(b.center-WF_FMIN)/(WF_FMAX-WF_FMIN)*h; if(y<0||y>h) continue;
+    g.strokeStyle=bandColor(b.id); g.beginPath(); g.moveTo(WF_GUTTER-6,y); g.lineTo(WF_GUTTER-1,y); g.stroke();
+    g.fillStyle=bandColor(b.id); g.textAlign='right'; g.fillText(b.center|0,WF_GUTTER-8,y+3); g.textAlign='left';
+  }
+  // marker in alto
+  g.fillStyle='#fff';
+  for(const m of S.markers){ const xi=nearestSliceIdx(m); if(xi<0) continue;
+    const x=WF_GUTTER+(xi+0.5)*colW; g.beginPath(); g.moveTo(x,0); g.lineTo(x-5,9); g.lineTo(x+5,9); g.fill(); }
+}
+function nearestSliceIdx(t){ const sl=S.slices; if(!sl.length) return -1;
+  let best=0,bd=1e18; for(let i=0;i<sl.length;i++){const d=Math.abs(sl[i].t-t); if(d<bd){bd=d;best=i;}} return best; }
+el('wf').addEventListener('mousemove',e=>{
+  const r=el('wf').getBoundingClientRect(); const sl=S.slices; if(!sl.length){tip();return;}
+  const w=r.width,h=r.height, cols=Math.max(sl.length,60), colW=(w-WF_GUTTER)/cols;
+  const xi=Math.floor((e.clientX-r.left-WF_GUTTER)/colW); if(xi<0||xi>=sl.length){tip();return;}
+  const nB=sl[0].bins.length;
+  const bin=Math.max(0,Math.min(nB-1,Math.floor((1-(e.clientY-r.top)/h)*nB)));
+  const hz=WF_FMIN+(bin+0.5)/nB*(WF_FMAX-WF_FMIN);
+  const db=Q_MIN+sl[xi].bins[bin]/255*(Q_MAX-Q_MIN);
+  tip(e.clientX,e.clientY,`${fmtT(sl[xi].t)}\n${hz.toFixed(1)} Hz · ${db.toFixed(1)} dBFS`);
+});
+el('wf').addEventListener('mouseleave',()=>tip());
+
+// ── grafico livelli ────────────────────────────────────────────────────────
+const CH={L:44,R:8,T:8,B:20, DBMIN:-85, DBMAX:-45};
+function chartGeom(w,h){
+  const t0=S.samples.length?S.samples[0].t:0, t1=S.samples.length?S.samples[S.samples.length-1].t:1;
+  return {t0,t1,xOf:t=>CH.L+(t-t0)/Math.max(1,t1-t0)*(w-CH.L-CH.R),
+    yOf:db=>CH.T+(1-(Math.max(CH.DBMIN,Math.min(CH.DBMAX,db))-CH.DBMIN)/(CH.DBMAX-CH.DBMIN))*(h-CH.T-CH.B)};
+}
+function drawChart(){
+  const [g,w,h]=fitCanvas(el('chart'));
+  g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
+  if(S.samples.length<2){ g.fillStyle='#5a5a64'; g.font='12px monospace';
+    g.fillText('in attesa di campioni…',12,24); return; }
+  const {t0,t1,xOf,yOf}=chartGeom(w,h);
+  g.fillStyle='#ffffff14';
+  for(const gp of S.gaps) g.fillRect(xOf(gp.startT),CH.T,Math.max(xOf(gp.endT)-xOf(gp.startT),2),h-CH.T-CH.B);
+  g.strokeStyle='#2a2a30'; g.fillStyle='#666'; g.font='10px monospace';
+  for(let db=CH.DBMIN+5;db<=CH.DBMAX;db+=10){ g.beginPath();g.moveTo(CH.L,yOf(db));g.lineTo(w-CH.R,yOf(db));g.stroke(); g.fillText(db,6,yOf(db)+3); }
+  for(let i=0;i<=5;i++){ const t=t0+(t1-t0)*i/5; g.fillText(fmtT(t),Math.min(xOf(t),w-58),h-6); }
+  for(const b of (cfg?.bands||[])){ g.strokeStyle=bandColor(b.id); g.setLineDash([5,5]);
+    g.beginPath(); g.moveTo(CH.L,yOf(b.thr)); g.lineTo(w-CH.R,yOf(b.thr)); g.stroke(); g.setLineDash([]); }
+  const stride=Math.max(1,Math.floor(S.samples.length/((w-CH.L)*2)));
+  const plot=(color,width,get)=>{ g.strokeStyle=color; g.lineWidth=width; g.beginPath(); let st=false;
+    for(let i=0;i<S.samples.length;i+=stride){ const v=get(S.samples[i]);
+      if(v==null){st=false;continue;} const x=xOf(S.samples[i].t),y=yOf(v);
+      st?g.lineTo(x,y):g.moveTo(x,y); st=true; } g.stroke(); g.lineWidth=1; };
+  plot('#ffffff30',1.2,s=>s.ref);
+  for(const b of (cfg?.bands||[])) plot(bandColor(b.id),1.8,s=>s.lv?.[b.id]);
+  if(cfg?.vibEnabled) plot(bandColor('V'),1.8,s=>s.vib);
+  // corsie eventi in alto
+  for(const e of S.events){ g.fillStyle=bandColor(e.band);
+    g.fillRect(xOf(e.startT),CH.T,Math.max(xOf(e.endT)-xOf(e.startT),3),4); }
+  g.fillStyle='#fff';
+  for(const m of S.markers){ const x=xOf(m); g.beginPath(); g.moveTo(x,CH.T); g.lineTo(x-5,CH.T+9); g.lineTo(x+5,CH.T+9); g.fill(); }
+}
+el('chart').addEventListener('mousemove',e=>{
+  if(S.samples.length<2){tip();return;}
+  const r=el('chart').getBoundingClientRect();
+  const {t0,t1}=chartGeom(r.width,r.height);
+  const frac=(e.clientX-r.left-CH.L)/(r.width-CH.L-CH.R); if(frac<0||frac>1){tip();return;}
+  const t=t0+frac*(t1-t0);
+  let lo=0,hi=S.samples.length-1;
+  while(lo<hi){ const mid=(lo+hi)>>1; S.samples[mid].t<t?lo=mid+1:hi=mid; }
+  if(lo>0&&t-S.samples[lo-1].t<S.samples[lo].t-t) lo--;
+  const s=S.samples[lo];
+  let txt=fmtT(s.t);
+  for(const b of (cfg?.bands||[])){ const v=s.lv?.[b.id]; if(v!=null) txt+=`\n${b.label}  ${v.toFixed(1)} dBFS`; }
+  if(s.vib!=null) txt+=`\nVibraz.  ${s.vib.toFixed(1)}`;
+  txt+=`\nref  ${s.ref.toFixed(1)}`;
+  tip(e.clientX,e.clientY,txt);
+});
+el('chart').addEventListener('mouseleave',()=>tip());
+
+// ── redraw + loop ──────────────────────────────────────────────────────────
+function redrawAll(){ drawWaterfall(); drawChart(); renderStats(); renderEvents(); }
+window.addEventListener('resize',redrawAll);
+setInterval(pollState,1000);
+setInterval(pollSpectrum,1000);
+setInterval(pollSession,4000);
+setInterval(loadSessions,30000);
+pollState(); pollSpectrum(); pollSession(); loadSessions();
+</script>
+</body>
+</html>

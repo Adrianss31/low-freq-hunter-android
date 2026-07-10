@@ -27,6 +27,7 @@ import io.github.adrianss31.lowfreqhunter.engine.EventData
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import io.github.adrianss31.lowfreqhunter.engine.SampleData
 import io.github.adrianss31.lowfreqhunter.sensor.VibrationEngine
+import io.github.adrianss31.lowfreqhunter.server.LanServer
 import io.github.adrianss31.lowfreqhunter.ui.fmtClockShort
 import io.github.adrianss31.lowfreqhunter.ui.fmtDur
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +86,8 @@ class MonitorService : Service() {
     private var evCount = 0
     private var clipCount = 0
     private var clipWriter: ClipWriter? = null
+    private var lanServer: LanServer? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -131,6 +134,26 @@ class MonitorService : Service() {
         val rec = if (listenOnly) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
         recorder = rec
 
+        // server LAN per il monitoraggio dal PC (se abilitato nel Setup)
+        var lanUrl: String? = null
+        if (settings.lan.enabled && settings.lan.token.isNotBlank()) {
+            runCatching {
+                val srv = LanServer(this, dao, settings.lan.token, settings.lan.port) { cfg }
+                srv.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
+                lanServer = srv
+                // a schermo spento Android addormenta il Wi-Fi: il PC vedrebbe
+                // buchi anche con la registrazione (locale) perfettamente viva
+                val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+                wifiLock = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "lfh:lan").also {
+                    it.setReferenceCounted(false)
+                    it.acquire()
+                }
+                lanUrl = LanServer.deviceIp()?.let { ip ->
+                    "http://$ip:${settings.lan.port}/?k=${settings.lan.token}"
+                }
+            }
+        }
+
         MonitorBus.resetSession()
         MonitorBus.state.value = MonitorBus.State(
             running = true,
@@ -138,6 +161,7 @@ class MonitorService : Service() {
             sessionId = rec?.sessionId,
             startedAt = rec?.startedAt ?: System.currentTimeMillis(),
             audioSource = cap.sourceName,
+            lanUrl = lanUrl,
         )
 
         val sink = object : NightEngine.Sink {
@@ -278,11 +302,15 @@ class MonitorService : Service() {
         running = false
         capture?.stop()
         vib?.stop()
+        lanServer?.let { runCatching { it.stop() } }
+        lanServer = null
+        wifiLock?.release()
+        wifiLock = null
         engine?.stop(System.currentTimeMillis())
         clipWriter?.let { runCatching { it.close() } }
         clipWriter = null
         recorder?.close()
-        MonitorBus.state.value = MonitorBus.state.value.copy(running = false, mode = "", activeBands = emptyMap())
+        MonitorBus.state.value = MonitorBus.state.value.copy(running = false, mode = "", activeBands = emptyMap(), lanUrl = null)
         wakeLock?.release()
         wakeLock = null
         instance = null
@@ -329,6 +357,7 @@ class MonitorService : Service() {
         }
         lines.append("\nSorgente ${st.audioSource}")
         st.batteryPct?.let { lines.append(" · Batteria $it%") }
+        st.lanUrl?.let { lines.append("\nPC: $it") }
         return lines.toString()
     }
 
