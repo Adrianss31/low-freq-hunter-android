@@ -209,7 +209,7 @@ fun LiveScreen() {
             Canvas(
                 Modifier
                     .fillMaxWidth()
-                    .height(90.dp)
+                    .height(135.dp)
             ) {
                 drawWaterfallColumns(
                     wfColumns.value, WF_COLS,

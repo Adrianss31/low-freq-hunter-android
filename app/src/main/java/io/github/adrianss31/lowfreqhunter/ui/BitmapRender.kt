@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
+import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import io.github.adrianss31.lowfreqhunter.engine.Palette
 
@@ -33,8 +34,21 @@ object BitmapRender {
             typeface = if (mono) Typeface.MONOSPACE else Typeface.DEFAULT
         }
 
-    /** Timeline: corsie evento per canale, curve dei livelli, soglie, gap, marker. */
-    fun timeline(b: SessionBundle, wPx: Int, hPx: Int, d: Float): Bitmap {
+    /**
+     * Timeline: corsie evento per canale, curve dei livelli, soglie, gap,
+     * marker. Range dB ristretto a [dbLo, dbHi] (default −80…−50: la zona
+     * dove vivono soglie e segnali; il vecchio −110…−10 schiacciava tutto).
+     * [only] limita curve e soglie a un solo canale (null = tutti).
+     */
+    fun timeline(
+        b: SessionBundle,
+        wPx: Int,
+        hPx: Int,
+        d: Float,
+        dbLo: Double = -80.0,
+        dbHi: Double = -50.0,
+        only: String? = null,
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(BG)
@@ -50,8 +64,8 @@ object BitmapRender {
         val tMin = b.samples.first().t
         val tMax = b.samples.last().t
         val span = maxOf(1L, tMax - tMin).toFloat()
-        val dbMin = -110.0
-        val dbMax = -10.0
+        val dbMin = dbLo
+        val dbMax = dbHi
         fun xOf(t: Long) = (t - tMin) / span * w
         fun yOf(db: Double) = (plotY0 + plotH - (db.coerceIn(dbMin, dbMax) - dbMin) / (dbMax - dbMin) * plotH).toFloat()
         fun chColor(id: String) = Palette.bandColorInt(id)
@@ -81,15 +95,16 @@ object BitmapRender {
         // griglia dB
         val grid = Paint().apply { color = BORDER; strokeWidth = 1f }
         val gridTxt = paint(0x66FFFFFF, 8 * d)
-        var db = -100.0
-        while (db <= -20.0) {
+        var db = dbLo
+        while (db <= dbHi) {
             c.drawLine(0f, yOf(db), w, yOf(db), grid)
             c.drawText("${db.toInt()}", 4 * d, yOf(db) - 3 * d, gridTxt)
-            db += 20.0
+            db += 10.0
         }
 
         // soglie tratteggiate
         for (band in b.cfg.enabledBands()) {
+            if (only != null && band.id != only) continue
             val p = Paint().apply {
                 color = Palette.bandColorInt(band.id)
                 strokeWidth = 1.5f * d
@@ -124,11 +139,12 @@ object BitmapRender {
             }
             c.drawPath(path, p)
         }
-        plot(0x40FFFFFF, 1.5f * d) { b.samples[it].ref }
+        if (only == null) plot(0x40FFFFFF, 1.5f * d) { b.samples[it].ref }
         for (band in b.cfg.enabledBands()) {
+            if (only != null && band.id != only) continue
             plot(Palette.bandColorInt(band.id), 2f * d) { b.levels[it][band.id] }
         }
-        if (b.cfg.vib.enabled) {
+        if (b.cfg.vib.enabled && (only == null || only == Channels.VIB)) {
             plot(Palette.VIB, 2f * d) { b.samples[it].vibDb }
         }
 

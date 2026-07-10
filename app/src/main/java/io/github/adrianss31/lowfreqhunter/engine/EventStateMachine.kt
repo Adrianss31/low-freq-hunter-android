@@ -4,9 +4,14 @@ import kotlin.math.log10
 import kotlin.math.pow
 
 /**
- * Macchina a stati per una banda: port 1:1 di smStep da js/night.js.
+ * Macchina a stati per una banda (da smStep di js/night.js).
  * IDLE → (livello ≥ soglia) RISING → (per ≥ minOn s) ACTIVE →
  * (livello < soglia−isteresi) FALLING → (per ≥ minOff s) chiusura evento.
+ *
+ * L'isteresi vale anche in RISING: un segnale che oscilla attorno alla
+ * soglia non azzera il conteggio di minOn finché resta sopra
+ * soglia−isteresi — altrimenti un solo secondo di dip impedisce per
+ * sempre l'apertura dell'evento.
  */
 class EventStateMachine(val band: String) {
 
@@ -49,7 +54,7 @@ class EventStateMachine(val band: String) {
                 }
             }
             State.RISING -> {
-                if (level < thrOn) {
+                if (level < thrOff) {
                     state = State.IDLE
                 } else if (t - riseT >= minOnS) {
                     state = State.ACTIVE

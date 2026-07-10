@@ -104,7 +104,7 @@ fun NightScreen() {
             Canvas(
                 Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
+                    .height(130.dp)
             ) {
                 drawWaterfallSlices(slices, enabled.map { Pair(it.center, Lfh.bandColor(it.id)) })
             }

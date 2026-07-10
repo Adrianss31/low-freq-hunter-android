@@ -93,8 +93,12 @@ class MonitorService : Service() {
             ACTION_START -> startMonitoring(listenOnly = false)
             ACTION_START_LISTEN -> startMonitoring(listenOnly = true)
             ACTION_STOP -> stopMonitoring()
+            // intent == null: il sistema ci ha uccisi e riavviati (STICKY).
+            // Riprendi a registrare: la sessione interrotta viene chiusa dal
+            // recupero in App.onCreate, qui ne parte una nuova.
+            null -> if (!running) startMonitoring(listenOnly = false)
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startMonitoring(listenOnly: Boolean) {
@@ -164,11 +168,7 @@ class MonitorService : Service() {
         eng.batteryPct = readBattery()
         eng.start(System.currentTimeMillis())
 
-        val started = cap.start(scope) { spec, binHz, nowMs ->
-            eng.processSpectrum(spec, binHz, nowMs)
-            publishLive(spec, binHz, nowMs, eng)
-        }
-        if (!started) {
+        if (!startCapture(cap, eng)) {
             stopMonitoring()
             return
         }
@@ -178,10 +178,20 @@ class MonitorService : Service() {
             if (v.start({ db -> eng.vibDb = db })) vib = v
         }
 
-        // batteria nel motore + refresh periodico della notifica
+        // batteria nel motore + refresh notifica + watchdog cattura: se il
+        // microfono non consegna dati da >20 s (recovery interno fallito),
+        // butta via il CaptureEngine e ripartine uno nuovo. Il buco resta
+        // documentato come gap dal NightEngine.
         scope.launch {
             while (running) {
                 eng.batteryPct = readBattery()
+                val c = capture
+                if (c != null && System.currentTimeMillis() - c.lastDataMs > 20_000) {
+                    c.stop()
+                    val fresh = CaptureEngine(this@MonitorService, cfg.fftSize, cfg.smoothNight)
+                    capture = fresh
+                    startCapture(fresh, eng)
+                }
                 updateNotification()
                 delay(60_000)
             }
@@ -199,6 +209,12 @@ class MonitorService : Service() {
             }
         }
     }
+
+    private fun startCapture(cap: CaptureEngine, eng: NightEngine): Boolean =
+        cap.start(scope) { spec, binHz, nowMs ->
+            eng.processSpectrum(spec, binHz, nowMs)
+            publishLive(spec, binHz, nowMs, eng)
+        }
 
     /** Stato istantaneo per la UI (schermate Live e Notte). */
     private fun publishLive(spec: FloatArray, binHz: Double, nowMs: Long, eng: NightEngine) {

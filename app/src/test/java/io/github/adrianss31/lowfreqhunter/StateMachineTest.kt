@@ -57,6 +57,25 @@ class StateMachineTest {
     }
 
     @Test
+    fun dipBreveInSalitaNonAzzeraIlConteggio() {
+        val m = sm()
+        var started = -1L
+        // sopra soglia a t=0..2, dip a -57 (sotto ON -55 ma sopra OFF -58)
+        // a t=3, di nuovo sopra: con minOn=5 deve aprire a t=5 da startT=0
+        for (t in 0L..2L) m.step(-50.0, -55.0, 3.0, 5, 5, t, { _, s -> started = s })
+        m.step(-57.0, -55.0, 3.0, 5, 5, 3, { _, s -> started = s })
+        assertEquals(EventStateMachine.State.RISING, m.state)
+        for (t in 4L..6L) m.step(-50.0, -55.0, 3.0, 5, 5, t, { _, s -> started = s })
+        assertTrue(m.isActive)
+        assertEquals(0L, started)
+        // sotto soglia−isteresi il conteggio invece si azzera
+        val m2 = sm()
+        m2.step(-50.0, -55.0, 3.0, 5, 5, 0)
+        m2.step(-60.0, -55.0, 3.0, 5, 5, 1)
+        assertEquals(EventStateMachine.State.IDLE, m2.state)
+    }
+
+    @Test
     fun forceCloseChiudeConOrarioDato() {
         val m = sm()
         for (t in 0L..5L) m.step(-50.0, -55.0, 3.0, 2, 2, t)

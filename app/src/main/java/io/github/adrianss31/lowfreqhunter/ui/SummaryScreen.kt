@@ -3,9 +3,13 @@ package io.github.adrianss31.lowfreqhunter.ui
 import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +36,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.adrianss31.lowfreqhunter.data.Exporter
 import io.github.adrianss31.lowfreqhunter.data.LfhDb
+import io.github.adrianss31.lowfreqhunter.data.SampleEntity
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
 import io.github.adrianss31.lowfreqhunter.data.deleteSessionData
 import io.github.adrianss31.lowfreqhunter.engine.Channels
@@ -50,6 +58,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/** Altezza dello spettrogramma nel dettaglio sessione (dp). */
+private const val WF_H_DP = 170
 
 @Composable
 fun SummaryScreen() {
@@ -127,14 +138,18 @@ fun SummaryScreen() {
     val contentPx = ((screenWidthDp - 44) * density).toInt().coerceIn(320, 1400)
     var timelineBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
     var waterfallBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+    // canale mostrato in timeline: null = tutti (le curve spesso si sovrappongono)
+    var selChannel by remember(b.session.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(b.session.id, selChannel) {
+        withContext(Dispatchers.Default) {
+            val tl = BitmapRender.timeline(b, contentPx, (200 * density).toInt(), density, only = selChannel)
+            withContext(Dispatchers.Main) { timelineBmp = tl }
+        }
+    }
     LaunchedEffect(b.session.id) {
         withContext(Dispatchers.Default) {
-            val tl = BitmapRender.timeline(b, contentPx, (200 * density).toInt(), density)
-            val wf = if (b.slices.isNotEmpty()) BitmapRender.waterfall(b, contentPx, (110 * density).toInt(), density) else null
-            withContext(Dispatchers.Main) {
-                timelineBmp = tl
-                waterfallBmp = wf
-            }
+            val wf = if (b.slices.isNotEmpty()) BitmapRender.waterfall(b, contentPx, (WF_H_DP * density).toInt(), density) else null
+            withContext(Dispatchers.Main) { waterfallBmp = wf }
         }
     }
 
@@ -154,7 +169,7 @@ fun SummaryScreen() {
         }
 
         Panel(Modifier.fillMaxWidth()) {
-            CapsLabel("Timeline")
+            CapsLabel("Timeline · −80…−50 dBFS")
             Spacer(Modifier.height(6.dp))
             val tl = timelineBmp
             if (tl != null) {
@@ -167,6 +182,29 @@ fun SummaryScreen() {
             } else {
                 Box(Modifier.fillMaxWidth().height(200.dp).background(Lfh.Bg))
             }
+            // filtro canale: le curve sovrapposte si leggono male insieme
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val chipColor = { ch: String? ->
+                    when (ch) {
+                        null -> Lfh.Text
+                        Channels.VIB -> Lfh.VibColor
+                        else -> Lfh.bandColor(ch)
+                    }
+                }
+                for (ch in listOf<String?>(null) + b.channels) {
+                    val sel = selChannel == ch
+                    HwButton(
+                        if (ch == null) "tutte" else b.cfg.channelLabel(ch),
+                        color = if (sel) Lfh.Bg else chipColor(ch),
+                        borderColor = chipColor(ch),
+                        bg = if (sel) chipColor(ch) else Lfh.Surface,
+                    ) { selChannel = ch }
+                }
+            }
         }
 
         if (b.slices.isNotEmpty()) {
@@ -174,15 +212,79 @@ fun SummaryScreen() {
                 CapsLabel("Spettrogramma · 20–200 Hz")
                 Spacer(Modifier.height(6.dp))
                 val wf = waterfallBmp
+                // scrubbing: il dito seleziona una colonna (slice da 30 s) e
+                // sotto compaiono orario e livelli delle bande in quel momento
+                var scrubIdx by remember(b.session.id) { mutableStateOf<Int?>(null) }
+                // stessa geometria del bitmap (BitmapRender.waterfall)
+                val gutterPx = 30f * density
+                val cols = maxOf(b.slices.size, 60)
+                val colW = (contentPx - gutterPx) / cols
+                fun idxOfX(x: Float, widthPx: Float): Int {
+                    val bx = x / widthPx * contentPx
+                    return ((bx - gutterPx) / colW).toInt().coerceIn(0, b.slices.size - 1)
+                }
                 if (wf != null) {
-                    Image(
-                        wf.asImageBitmap(),
-                        contentDescription = "Spettrogramma della sessione",
-                        modifier = Modifier.fillMaxWidth().height(110.dp),
-                        contentScale = ContentScale.FillBounds,
+                    Box(Modifier.fillMaxWidth().height(WF_H_DP.dp)) {
+                        Image(
+                            wf.asImageBitmap(),
+                            contentDescription = "Spettrogramma della sessione",
+                            modifier = Modifier.matchParentSize(),
+                            contentScale = ContentScale.FillBounds,
+                        )
+                        Canvas(
+                            Modifier
+                                .matchParentSize()
+                                .pointerInput(b.session.id) {
+                                    detectTapGestures(onPress = { pos ->
+                                        scrubIdx = idxOfX(pos.x, size.width.toFloat())
+                                    })
+                                }
+                                .pointerInput(b.session.id) {
+                                    detectDragGestures(
+                                        onDragStart = { pos ->
+                                            scrubIdx = idxOfX(pos.x, size.width.toFloat())
+                                        },
+                                    ) { change, _ ->
+                                        change.consume()
+                                        scrubIdx = idxOfX(change.position.x, size.width.toFloat())
+                                    }
+                                },
+                        ) {
+                            val si = scrubIdx ?: return@Canvas
+                            val x = (gutterPx + (si + 0.5f) * colW) / contentPx * size.width
+                            drawLine(
+                                Color.White.copy(alpha = 0.85f),
+                                Offset(x, 0f), Offset(x, size.height),
+                                strokeWidth = 2f,
+                            )
+                        }
+                    }
+                } else {
+                    Box(Modifier.fillMaxWidth().height(WF_H_DP.dp).background(Lfh.Bg))
+                }
+                Spacer(Modifier.height(6.dp))
+                val si = scrubIdx
+                if (si != null && si < b.slices.size) {
+                    val t = b.slices[si].t
+                    val idx = nearestSampleIdx(b.samples, t)
+                    val parts = buildList {
+                        add(fmtClock(t * 1000))
+                        if (idx >= 0) {
+                            val lv = b.levels[idx]
+                            for (band in b.cfg.enabledBands()) {
+                                lv[band.id]?.let { add("${band.center.toInt()}Hz %.1f".format(it)) }
+                            }
+                            if (b.cfg.vib.enabled) {
+                                b.samples[idx].vibDb?.let { add("Vib %.1f".format(it)) }
+                            }
+                        }
+                    }
+                    Text(
+                        parts.joinToString("  ·  "),
+                        color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
                     )
                 } else {
-                    Box(Modifier.fillMaxWidth().height(110.dp).background(Lfh.Bg))
+                    CapsLabel("Tocca o trascina sul grafico: orario e dBFS delle bande", color = Lfh.TextFaint)
                 }
             }
         }
@@ -381,6 +483,19 @@ fun SummaryScreen() {
             },
         )
     }
+}
+
+/** Indice del campione con t più vicino (lista ordinata per t), −1 se vuota. */
+private fun nearestSampleIdx(samples: List<SampleEntity>, t: Long): Int {
+    if (samples.isEmpty()) return -1
+    var lo = 0
+    var hi = samples.size - 1
+    while (lo < hi) {
+        val mid = (lo + hi) / 2
+        if (samples[mid].t < t) lo = mid + 1 else hi = mid
+    }
+    if (lo > 0 && t - samples[lo - 1].t < samples[lo].t - t) lo--
+    return lo
 }
 
 @Composable
