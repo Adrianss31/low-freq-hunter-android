@@ -21,6 +21,8 @@ import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.SessionRecorder
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.dsp.Bands
+import io.github.adrianss31.lowfreqhunter.dsp.Ema
+import io.github.adrianss31.lowfreqhunter.dsp.MovingMedian
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.EngineCfg
 import io.github.adrianss31.lowfreqhunter.engine.EventData
@@ -52,6 +54,9 @@ class MonitorService : Service() {
         const val ACTION_STOP = "io.github.adrianss31.lowfreqhunter.STOP"
         private const val CHANNEL_ID = "monitor"
         private const val NOTIF_ID = 1
+        private const val WAKELOCK_TIMEOUT_MS = 10 * 60 * 1000L
+        /** Costante di tempo (s) dello smoothing dei valori mostrati in UI. */
+        private const val UI_TAU_S = 1.2
 
         @Volatile
         var instance: MonitorService? = null
@@ -89,6 +94,13 @@ class MonitorService : Service() {
     private var lanServer: LanServer? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
+    // smussatori dei soli valori pubblicati alla UI/notifica/LAN: il motore
+    // eventi e i campioni registrati continuano a usare i valori grezzi
+    private val uiLevels = HashMap<String, Ema>()
+    private val uiRef = Ema(UI_TAU_S)
+    private val uiVib = Ema(UI_TAU_S)
+    private val uiDom = MovingMedian(12) // ~3 s a 4 spettri/s
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,12 +108,14 @@ class MonitorService : Service() {
             ACTION_START -> startMonitoring(listenOnly = false)
             ACTION_START_LISTEN -> startMonitoring(listenOnly = true)
             ACTION_STOP -> stopMonitoring()
-            // intent == null: il sistema ci ha uccisi e riavviati (STICKY).
-            // Riprendi a registrare: la sessione interrotta viene chiusa dal
-            // recupero in App.onCreate, qui ne parte una nuova.
+            // REDELIVER: dopo un kill il sistema riconsegna l'ultimo intent,
+            // quindi si riparte nella stessa modalità (rec O solo ascolto —
+            // con STICKY l'intent tornava null e un "solo ascolto" ucciso
+            // ripartiva come registrazione non richiesta). La sessione
+            // interrotta viene chiusa dal recupero in App.onCreate.
             null -> if (!running) startMonitoring(listenOnly = false)
         }
-        return START_STICKY
+        return START_REDELIVER_INTENT
     }
 
     private fun startMonitoring(listenOnly: Boolean) {
@@ -110,6 +124,10 @@ class MonitorService : Service() {
         listenMode = listenOnly
         evCount = 0
         instance = this
+        uiLevels.clear()
+        uiRef.reset()
+        uiVib.reset()
+        uiDom.reset()
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
         cfg = settings.engine
@@ -125,7 +143,9 @@ class MonitorService : Service() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "lfh:monitor").also {
             it.setReferenceCounted(false)
-            it.acquire(12 * 60 * 60 * 1000L) // massimo 12 h di sessione
+            // timeout breve rinnovato dal watchdog: nessun limite implicito
+            // alla durata della sessione (prima 12 h fisse, poi buchi silenziosi)
+            it.acquire(WAKELOCK_TIMEOUT_MS)
         }
 
         val dao = LfhDb.get(this).dao()
@@ -209,6 +229,7 @@ class MonitorService : Service() {
         scope.launch {
             while (running) {
                 eng.batteryPct = readBattery()
+                wakeLock?.acquire(WAKELOCK_TIMEOUT_MS) // rinnovo (ref counting off)
                 val c = capture
                 if (c != null && System.currentTimeMillis() - c.lastDataMs > 20_000) {
                     c.stop()
@@ -240,26 +261,28 @@ class MonitorService : Service() {
             publishLive(spec, binHz, nowMs, eng)
         }
 
-    /** Stato istantaneo per la UI (schermate Live e Notte). */
+    /** Stato istantaneo per la UI (schermate Live e Notte), smussato: i
+     *  numeri e i meter respirano invece di saltellare a ogni spettro. */
     private fun publishLive(spec: FloatArray, binHz: Double, nowMs: Long, eng: NightEngine) {
         val levels = HashMap<String, Double>()
         val active = HashMap<String, Long>()
         for (b in cfg.enabledBands()) {
-            levels[b.id] = Bands.bandDb(spec, binHz, b.lo, b.hi)
+            val raw = Bands.bandDb(spec, binHz, b.lo, b.hi)
+            levels[b.id] = uiLevels.getOrPut(b.id) { Ema(UI_TAU_S) }.push(raw, nowMs)
             eng.activeSince(b.id)?.let { active[b.id] = it }
         }
         if (cfg.vib.enabled) {
             eng.activeSince(Channels.VIB)?.let { active[Channels.VIB] = it }
         }
-        val dom = Bands.dominantHz(spec, binHz, NightEngine.WF_FMIN, NightEngine.WF_FMAX)
+        val dom = uiDom.push(Bands.dominantHz(spec, binHz, NightEngine.WF_FMIN, NightEngine.WF_FMAX).first)
         val prev = MonitorBus.state.value
         MonitorBus.state.value = prev.copy(
             eventsCount = evCount,
             activeBands = active,
             levels = levels,
-            vibDb = eng.vibDb,
-            ref = Bands.bandDb(spec, binHz, NightEngine.REF_LO, NightEngine.REF_HI),
-            domHz = dom.first,
+            vibDb = eng.vibDb?.let { uiVib.push(it, nowMs) },
+            ref = uiRef.push(Bands.bandDb(spec, binHz, NightEngine.REF_LO, NightEngine.REF_HI), nowMs),
+            domHz = dom,
             batteryPct = eng.batteryPct,
         )
         // spettro per la UI: copia dei bin fino a 2 kHz

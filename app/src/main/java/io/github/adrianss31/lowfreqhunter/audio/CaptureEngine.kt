@@ -59,6 +59,14 @@ class CaptureEngine(
     private var record: AudioRecord? = null
     private var job: Job? = null
 
+    // stop() può arrivare da un altro thread mentre il loop di lettura sta
+    // ricreando l'AudioRecord dopo un errore: il lock serializza lo scambio
+    // del riferimento, `stopped` impedisce di installarne uno nuovo dopo lo stop
+    private val lock = Any()
+
+    @Volatile
+    private var stopped = false
+
     var smoothing: Double
         get() = analyzer.smoothing
         set(v) { analyzer.smoothing = v }
@@ -95,6 +103,7 @@ class CaptureEngine(
         if (job != null) return true
         val hop = sampleRate / 4 // 250 ms
         val rec = createRecord() ?: return false
+        stopped = false
         record = rec
         rec.startRecording()
         analyzer.reset()
@@ -104,7 +113,7 @@ class CaptureEngine(
             val ring = FloatArray(fftSize)
             val chunk = FloatArray(hop)
             var failures = 0
-            while (record != null) {
+            while (!stopped) {
                 val cur = record ?: break
                 val n = cur.read(chunk, 0, hop, AudioRecord.READ_BLOCKING)
                 if (n <= 0) {
@@ -112,12 +121,19 @@ class CaptureEngine(
                     // morire in silenzio con la notifica ancora su REC —
                     // ricrea l'AudioRecord e riprova, con pausa crescente.
                     failures++
+                    synchronized(lock) { if (record === cur) record = null }
                     runCatching { cur.stop() }
                     cur.release()
                     delay(minOf(failures, 10) * 1000L)
-                    if (record == null) break // stop() nel frattempo
+                    if (stopped) break
                     val fresh = createRecord() ?: continue
-                    record = fresh
+                    val installed = synchronized(lock) {
+                        if (stopped) false else { record = fresh; true }
+                    }
+                    if (!installed) {
+                        fresh.release()
+                        break
+                    }
                     runCatching { fresh.startRecording() }
                     continue
                 }
@@ -135,8 +151,12 @@ class CaptureEngine(
     }
 
     fun stop() {
-        val rec = record
-        record = null
+        val rec: AudioRecord?
+        synchronized(lock) {
+            stopped = true
+            rec = record
+            record = null
+        }
         job?.cancel()
         job = null
         if (rec != null) {
