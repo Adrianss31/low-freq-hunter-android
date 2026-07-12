@@ -1,5 +1,6 @@
 package io.github.adrianss31.lowfreqhunter.ui
 
+import io.github.adrianss31.lowfreqhunter.data.CalibCfg
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -28,3 +29,11 @@ fun fmtDur(totalS: Long): String {
 fun fmtHm(totalMin: Int): String = "%02d:%02d".format(totalMin / 60, totalMin % 60)
 
 fun fmtDb(v: Double?): String = if (v == null || !v.isFinite()) "—" else "%.1f".format(v)
+
+fun fmtDateShort(ms: Long): String =
+    SimpleDateFormat("dd/MM", Locale.ITALIAN).format(Date(ms))
+
+/** "≈ 68 dB SPL" se la calibrazione è attiva e il valore ha senso, altrimenti null. */
+fun fmtSpl(dbfs: Double?, calib: CalibCfg): String? =
+    if (!calib.enabled || dbfs == null || !dbfs.isFinite() || dbfs <= -119.0) null
+    else "≈ %.0f dB SPL".format(dbfs + calib.offsetDb)

@@ -333,6 +333,34 @@ fun SettingsScreen() {
             }
         }
 
+        // stima dB SPL
+        CapsLabel("Stima dB SPL", color = Lfh.Text)
+        Panel(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Mostra dB SPL stimati", color = Lfh.Text, fontSize = 14.sp)
+                    CapsLabel("dB SPL ≈ dBFS + offset — stima, non fonometria", color = Lfh.TextFaint)
+                }
+                HwSwitch(settings.calib.enabled) {
+                    upd { it.copy(calib = it.calib.copy(enabled = !it.calib.enabled)) }
+                }
+            }
+            if (settings.calib.enabled) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Offset", color = Lfh.Text, fontSize = 13.sp)
+                        CapsLabel("regola finché combacia con un fonometro (anche app) su un suono costante", color = Lfh.TextFaint)
+                    }
+                    Stepper(
+                        "${settings.calib.offsetDb.toInt()}", unit = "dB",
+                        onMinus = { upd { it.copy(calib = it.calib.copy(offsetDb = (it.calib.offsetDb - 1).coerceAtLeast(60.0))) } },
+                        onPlus = { upd { it.copy(calib = it.calib.copy(offsetDb = (it.calib.offsetDb + 1).coerceAtMost(140.0))) } },
+                    )
+                }
+            }
+        }
+
         CapsLabel(
             "Isteresi ${settings.engine.hystDb.toInt()} dB · slice waterfall 30 s · gap oltre 5 s",
             color = Lfh.TextFaint,

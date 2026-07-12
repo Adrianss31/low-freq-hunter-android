@@ -20,7 +20,14 @@ informativa.
 - **Programmazione** — avvio/stop automatico ogni notte (setAlarmClock +
   activity-trampolino per l'accesso al microfono da background)
 - **Log** — timeline, statistiche, export report PNG / CSV / JSON in
-  Documents/LowFreqHunter e via share sheet
+  Documents/LowFreqHunter e via share sheet; **heatmap di ricorrenza**
+  (ora del giorno × notte sulle ultime sessioni: il disturbo che torna ogni
+  notte alla stessa ora si vede a colpo d'occhio)
+- **Stima dB SPL** opzionale — offset tarato dall'utente su un riferimento
+  (fonometro o app); i report restano marcati come stima indicativa
+- Valori e grafici smussati: spettro e meter interpolati a 60 fps, livelli
+  testuali mediati ~1 s, frequenza dominante come mediana mobile (il motore
+  eventi e i dati registrati usano sempre i valori grezzi)
 - Bande dinamiche (1–8), soglie assolute in dBFS, batteria nei campioni,
   esenzione ottimizzazioni batteria
 - UI ispirata a Teenage Engineering / Nothing: font dot-matrix (Doto),
@@ -35,8 +42,8 @@ mai committati). Ogni push su `main` produce l'APK come artifact; i tag `v*`
 pubblicano una release con `lowfreqhunter.apk` allegato.
 
 I test JVM (`gradle testReleaseUnitTest`) verificano FFT, integrazione di
-banda, macchina a stati eventi, gap, slice waterfall e canale V con segnali
-sintetici.
+banda, macchina a stati eventi, gap, slice waterfall, canale V, smussatori
+(EMA/mediana) e aggregazione di ricorrenza con segnali sintetici.
 
 ## Installazione
 

@@ -152,6 +152,10 @@ interface LfhDao {
     @Query("SELECT * FROM clips WHERE sessionId = :id ORDER BY t")
     suspend fun clips(id: String): List<ClipEntity>
 
+    // eventi di più sessioni in un colpo (heatmap di ricorrenza)
+    @Query("SELECT * FROM events WHERE sessionId IN (:ids)")
+    suspend fun eventsForSessions(ids: List<String>): List<EventEntity>
+
     // letture incrementali per il server LAN (polling con ?since=)
     @Query("SELECT * FROM samples WHERE sessionId = :id AND t > :sinceT ORDER BY t")
     suspend fun samplesSince(id: String, sinceT: Long): List<SampleEntity>

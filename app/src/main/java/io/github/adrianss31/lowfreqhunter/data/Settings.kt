@@ -27,6 +27,18 @@ data class LanCfg(
     val token: String = "",        // generato al primo enable; vuoto = nessun accesso
 )
 
+/**
+ * Stima dB SPL: offset additivo sui dBFS, tarato dall'utente confrontando un
+ * suono costante con un fonometro (anche un'app). Resta una stima — i report
+ * mantengono il disclaimer — ma rende i livelli leggibili a terzi.
+ * Default 120: la CDD Android raccomanda −26 dBFS @ 94 dB SPL.
+ */
+@Serializable
+data class CalibCfg(
+    val enabled: Boolean = false,
+    val offsetDb: Double = 120.0,
+)
+
 @Serializable
 data class AppSettings(
     val engine: EngineCfg = EngineCfg(),
@@ -34,6 +46,7 @@ data class AppSettings(
     val sonify: Boolean = false,
     val schedule: ScheduleCfg = ScheduleCfg(),
     val lan: LanCfg = LanCfg(),
+    val calib: CalibCfg = CalibCfg(),
 )
 
 private val Context.dataStore by preferencesDataStore(name = "lfh-settings")

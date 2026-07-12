@@ -47,10 +47,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.Exporter
 import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.SampleEntity
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
+import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.data.deleteSessionData
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
@@ -66,6 +68,7 @@ private const val WF_H_DP = 170
 fun SummaryScreen() {
     val ctx = LocalContext.current
     val dao = remember { LfhDb.get(ctx).dao() }
+    val settings by SettingsRepo.get(ctx).flow.collectAsState(initial = AppSettings())
     val sessions by dao.sessionsFlow().collectAsState(initial = emptyList())
     val bus by MonitorBus.state.collectAsState()
     var selected by remember { mutableStateOf<String?>(null) }
@@ -89,6 +92,7 @@ fun SummaryScreen() {
         ) {
             CapsLabel("Sessioni salvate", color = Lfh.Text)
             Spacer(Modifier.height(2.dp))
+            RecurrencePanel(sessions, dao)
             if (sessions.isEmpty()) {
                 Panel(Modifier.fillMaxWidth()) {
                     Text("Nessuna sessione.\nAvvia un log notturno dalla scheda NOTTE.", color = Lfh.TextDim, fontSize = 13.sp, lineHeight = 20.sp)
@@ -302,6 +306,7 @@ fun SummaryScreen() {
             StatRow("Tempo sopra soglia", fmtDur(noisyS))
             StatRow("Evento più lungo", fmtDur(longest))
             StatRow("Picco max", peak?.let { "%.1f dBFS".format(it) } ?: "—")
+            fmtSpl(peak, settings.calib)?.let { StatRow("Picco max (stima SPL)", it, Lfh.Amber) }
             StatRow("Marker", "${b.markers.size}")
             if (gapS > 0) StatRow("⚠ Monitoraggio interrotto", "${fmtDur(gapS)} (${b.gaps.size} gap)", Lfh.Amber)
         }
@@ -441,10 +446,10 @@ fun SummaryScreen() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HwButton("report png", Modifier.weight(1f), color = Lfh.Accent) {
-                    export("${Exporter.baseName(b)}_report.png", "image/png") { Exporter.reportPng(b) }
+                    export("${Exporter.baseName(b)}_report.png", "image/png") { Exporter.reportPng(b, settings.calib) }
                 }
                 HwButton("json", Modifier.weight(1f)) {
-                    export("${Exporter.baseName(b)}.json", "application/json") { Exporter.json(b).toByteArray() }
+                    export("${Exporter.baseName(b)}.json", "application/json") { Exporter.json(b, settings.calib).toByteArray() }
                 }
             }
             Spacer(Modifier.height(8.dp))

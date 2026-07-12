@@ -121,7 +121,7 @@ object Exporter {
     }
 
     // ── JSON ────────────────────────────────────────────────────────────────
-    fun json(b: SessionBundle): String {
+    fun json(b: SessionBundle, calib: CalibCfg? = null): String {
         fun eventJson(e: EventEntity): JsonObject = buildJsonObject {
             put("band", e.band)
             put("start_iso", isoUtc(e.startT))
@@ -135,6 +135,10 @@ object Exporter {
             put("format", 1)
             put("exported_at", isoUtc(System.currentTimeMillis() / 1000))
             put("note", "Livelli audio in dBFS (non calibrati in dB SPL); canale V in dB rel 1 g.")
+            calib?.takeIf { it.enabled }?.let {
+                put("spl_offset_db", it.offsetDb)
+                put("spl_note", "dB SPL stimati ≈ dBFS + spl_offset_db (calibrazione utente, indicativa)")
+            }
             put("session", buildJsonObject {
                 put("label", b.session.label)
                 put("started_at", isoUtc(b.session.startedAt / 1000))
@@ -168,10 +172,11 @@ object Exporter {
     }
 
     // ── Report PNG ──────────────────────────────────────────────────────────
-    fun reportPng(b: SessionBundle): ByteArray {
+    fun reportPng(b: SessionBundle, calib: CalibCfg? = null): ByteArray {
         val w = 1400
         val evRows = minOf(b.events.size + b.gaps.size, 28)
-        val h = 560 + evRows * 22 + 60
+        val splLine = calib?.enabled == true
+        val h = 560 + evRows * 22 + 60 + (if (splLine) 22 else 0)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.WHITE)
@@ -188,17 +193,22 @@ object Exporter {
         val bandsStr = b.cfg.enabledBands().joinToString("   ·   ") {
             "${it.center.toInt()} Hz ±${it.width.toInt()} @ ${it.thr.toInt()} dBFS"
         } + if (b.cfg.vib.enabled) "   ·   Vibraz.: accel @ ${b.cfg.vib.thr.toInt()} dB(g)" else ""
-        val lines = listOf(
-            "Sessione: ${s.label}     Inizio: ${fmtDate(s.startedAt)} ${fmtClock(s.startedAt)}     Fine: $endStr     Durata: $durStr",
-            "Canali: $bandsStr",
-            "Trigger: ≥${b.cfg.minOnS} s sopra soglia per aprire, ≥${b.cfg.minOffS} s sotto per chiudere (isteresi ${b.cfg.hystDb.toInt()} dB)",
-            "FFT ${b.cfg.fftSize} @ ${s.sampleRate} Hz (≈${"%.2f".format(s.binHz)} Hz/bin) · Sorgente ${s.audioSource} · dBFS non calibrati in dB SPL" +
-                if (s.recovered) " · SESSIONE RECUPERATA (interruzione)" else "",
-        )
+        val lines = buildList {
+            add("Sessione: ${s.label}     Inizio: ${fmtDate(s.startedAt)} ${fmtClock(s.startedAt)}     Fine: $endStr     Durata: $durStr")
+            add("Canali: $bandsStr")
+            add("Trigger: ≥${b.cfg.minOnS} s sopra soglia per aprire, ≥${b.cfg.minOffS} s sotto per chiudere (isteresi ${b.cfg.hystDb.toInt()} dB)")
+            add(
+                "FFT ${b.cfg.fftSize} @ ${s.sampleRate} Hz (≈${"%.2f".format(s.binHz)} Hz/bin) · Sorgente ${s.audioSource} · dBFS non calibrati in dB SPL" +
+                    if (s.recovered) " · SESSIONE RECUPERATA (interruzione)" else "",
+            )
+            if (splLine) {
+                add("Stima SPL: dB SPL ≈ dBFS + ${calib!!.offsetDb.toInt()} dB (calibrazione utente, indicativa)")
+            }
+        }
         lines.forEachIndexed { i, l -> c.drawText(l, 30f, 76f + i * 22f, body) }
 
         // spettrogramma
-        var y = 180f
+        var y = 180f + if (splLine) 22f else 0f
         c.drawText("Spettrogramma 20–200 Hz (tutta la sessione)", 30f, y - 8f, paint(Color.rgb(17, 17, 17), 16f, bold = true))
         drawWaterfall(c, 30f, y, w - 60f, 150f, b)
         y += 185f

@@ -162,7 +162,7 @@ fun NightScreen() {
             Row(verticalAlignment = Alignment.Bottom) {
                 DotValue("%.1f".format(bus.domHz), color = Lfh.Accent, size = 32)
                 Spacer(Modifier.width(6.dp))
-                CapsLabel("Hz dominante", color = Lfh.TextFaint)
+                CapsLabel("Hz dominante (mediana ~3 s)", color = Lfh.TextFaint)
                 Spacer(Modifier.weight(1f))
                 if (bus.activeBands.isNotEmpty()) {
                     val since = bus.activeBands.values.min()
@@ -190,6 +190,10 @@ fun NightScreen() {
                         modifier = Modifier.width(56.dp),
                     )
                 }
+            }
+            fmtSpl(bus.levels.values.maxOrNull(), settings.calib)?.let {
+                Spacer(Modifier.height(4.dp))
+                CapsLabel("banda più forte $it (stima)", color = Lfh.TextFaint)
             }
             if (settings.engine.vib.enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
