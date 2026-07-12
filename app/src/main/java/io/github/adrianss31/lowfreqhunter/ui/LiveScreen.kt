@@ -3,6 +3,9 @@ package io.github.adrianss31.lowfreqhunter.ui
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.widget.Toast
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,12 +25,14 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,6 +83,7 @@ fun LiveScreen() {
     val localFrames = remember { MutableStateFlow<MonitorBus.SpectrumFrame?>(null) }
     var frame by remember { mutableStateOf<MonitorBus.SpectrumFrame?>(null) }
     val wfColumns = remember { mutableStateOf<List<FloatArray>>(emptyList()) }
+    var colSeq by remember { mutableIntStateOf(0) }
     var frozen by remember { mutableStateOf(false) }
     var selBand by remember { mutableStateOf(settings.engine.bands.firstOrNull()?.id) }
     var peak by remember { mutableStateOf(-120.0) }
@@ -93,6 +99,7 @@ fun LiveScreen() {
         if (frozen) return
         frame = f
         wfColumns.value = (wfColumns.value + wfColumn(f.spec, f.binHz)).takeLast(WF_COLS)
+        colSeq++
     }
 
     LaunchedEffect(serviceRunning) {
@@ -143,11 +150,18 @@ fun LiveScreen() {
     if (selBand == null || enabled.none { it.id == selBand }) {
         selBand = enabled.firstOrNull()?.id
     }
-    val f = frame
+    // due velocità di smoothing: lo spettro interpolato a 60 fps muove curva
+    // e meter in modo fluido, la media ~1 s tiene ferme le cifre dei testi
+    val smoothFrame = rememberSmoothedFrame(frame, running)
+    val textSmoother = remember { TextLevels() }
+    val f = smoothFrame
     val levels: Map<String, Double> =
         if (f != null && running) enabled.associate { it.id to Bands.bandDb(f.spec, f.binHz, it.lo, it.hi) }
         else emptyMap()
-    val selLevel = selBand?.let { levels[it] }
+    val rawFrame = frame
+    val textLevels: Map<String, Double> =
+        if (rawFrame != null && running) textSmoother.push(rawFrame, enabled) else emptyMap()
+    val selLevel = selBand?.let { textLevels[it] }
     if (selLevel != null && selLevel > peak) peak = selLevel
 
     // geiger — relativo alla soglia della banda selezionata: silenzioso
@@ -195,14 +209,20 @@ fun LiveScreen() {
                     .height(170.dp)
                     .background(Lfh.Bg)
             ) {
-                val fr = frame
+                val fr = f
                 if (fr != null && running) {
                     drawSpectrum(fr.spec, fr.binHz, settings.specXMax.toDouble(), enabled, { Lfh.bandColor(it) })
                 }
             }
         }
 
-        // waterfall scorrevole (~30 s)
+        // waterfall scorrevole (~30 s), con slittamento continuo tra colonne
+        val wfShift = remember { Animatable(0f) }
+        LaunchedEffect(colSeq) {
+            if (colSeq == 0) return@LaunchedEffect
+            wfShift.snapTo(1f)
+            wfShift.animateTo(0f, tween(240, easing = LinearEasing))
+        }
         Panel(Modifier.fillMaxWidth()) {
             CapsLabel("Waterfall · 20–200 Hz")
             Spacer(Modifier.height(6.dp))
@@ -210,10 +230,12 @@ fun LiveScreen() {
                 Modifier
                     .fillMaxWidth()
                     .height(135.dp)
+                    .clipToBounds()
             ) {
                 drawWaterfallColumns(
                     wfColumns.value, WF_COLS,
                     enabled.map { Pair(it.center, Lfh.bandColor(it.id)) },
+                    shiftFrac = wfShift.value,
                 )
             }
         }
@@ -226,6 +248,9 @@ fun LiveScreen() {
                 Column {
                     CapsLabel("dBFS · ${selBand?.let { settings.engine.channelLabel(it) } ?: "—"}")
                     CapsLabel("picco ${fmtDb(peak)}", color = Lfh.TextFaint)
+                    fmtSpl(selLevel, settings.calib)?.let {
+                        CapsLabel("$it (stima)", color = Lfh.Amber)
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -239,8 +264,8 @@ fun LiveScreen() {
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        fmtDb(levels[b.id]),
-                        color = if ((levels[b.id] ?: -120.0) >= b.thr) Lfh.Rec else Lfh.TextDim,
+                        fmtDb(textLevels[b.id]),
+                        color = if ((textLevels[b.id] ?: -120.0) >= b.thr) Lfh.Rec else Lfh.TextDim,
                         fontSize = 11.sp,
                         fontFamily = MonoFont,
                         modifier = Modifier.width(48.dp),
@@ -310,7 +335,9 @@ fun LiveScreen() {
         }
 
         CapsLabel(
-            "Sorgente: ${if (serviceRunning) bus.audioSource else capture?.sourceName ?: "—"} · livelli dBFS non calibrati in dB SPL",
+            "Sorgente: ${if (serviceRunning) bus.audioSource else capture?.sourceName ?: "—"} · " +
+                if (settings.calib.enabled) "SPL stimato con offset ${settings.calib.offsetDb.toInt()} dB"
+                else "livelli dBFS non calibrati in dB SPL",
             color = Lfh.TextFaint,
         )
     }

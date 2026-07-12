@@ -30,6 +30,18 @@ object Bands {
                 maxI = i
             }
         }
-        return Pair(maxI * binHz, maxV)
+        // interpolazione parabolica sui dB dei bin adiacenti: senza, la stima
+        // procede a gradini di binHz anche quando il tono è fermo tra due bin
+        var freq = maxI * binHz
+        if (maxI in (i0 + 1) until i1) {
+            val a = spec[maxI - 1].toDouble()
+            val c = spec[maxI + 1].toDouble()
+            val denom = a - 2.0 * maxV + c
+            if (kotlin.math.abs(denom) > 1e-9) {
+                val delta = (0.5 * (a - c) / denom).coerceIn(-0.5, 0.5)
+                freq = (maxI + delta) * binHz
+            }
+        }
+        return Pair(freq, maxV)
     }
 }

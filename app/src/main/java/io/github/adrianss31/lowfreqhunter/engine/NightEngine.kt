@@ -1,6 +1,7 @@
 package io.github.adrianss31.lowfreqhunter.engine
 
 import io.github.adrianss31.lowfreqhunter.dsp.Bands
+import io.github.adrianss31.lowfreqhunter.dsp.MovingMedian
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
@@ -56,6 +57,10 @@ class NightEngine(
     private var secN = 0
     private var lastDomHz = 0.0
 
+    // dominante registrata nei campioni: mediana degli ultimi 5 secondi,
+    // il valore istantaneo saltava tra bin (e tra fondamentale e armonica)
+    private val domMedian = MovingMedian(5)
+
     // accumulatore slice waterfall
     private val sliceAcc = DoubleArray(WF_NBINS)
     private var sliceCount = 0
@@ -76,6 +81,7 @@ class NightEngine(
         sliceAcc.fill(0.0)
         sliceCount = 0
         lastSliceT = nowMs / 1000
+        domMedian.reset()
         started = true
     }
 
@@ -150,12 +156,13 @@ class NightEngine(
                 ?.let { sink.onEvent(it) }
         }
 
+        val domMed = domMedian.push(lastDomHz)
         sink.onSample(
             SampleData(
                 t = t,
                 lv = avg,
                 ref = (avgRef * 100).roundToInt() / 100.0,
-                domHz = (lastDomHz * 10).roundToInt() / 10.0,
+                domHz = (domMed * 10).roundToInt() / 10.0,
                 vibDb = vib?.let { (it * 100).roundToInt() / 100.0 },
                 battPct = batteryPct,
             )

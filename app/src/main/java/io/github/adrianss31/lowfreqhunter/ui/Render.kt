@@ -278,11 +278,17 @@ object Render {
         }
     }
 
-    /** Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna). */
+    /**
+     * Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna).
+     * [shiftFrac] 0..1 trasla di una frazione di colonna verso destra: animato
+     * da 1 a 0 dopo ogni nuova colonna, lo scorrimento diventa continuo
+     * (il chiamante deve avere clipToBounds sul Canvas).
+     */
     fun DrawScope.drawWaterfallColumns(
         columns: List<FloatArray>, // dB per bin, più recente in coda
         maxColumns: Int,
         guides: List<Pair<Double, Color>>,
+        shiftFrac: Float = 0f,
     ) {
         val h = size.height
         val gutter = wfGutter(guides)
@@ -292,7 +298,7 @@ object Render {
             val nBins = columns[0].size
             val colW = plotW / maxColumns
             val rowH = h / nBins
-            val startX = gutter + plotW - columns.size * colW
+            val startX = gutter + plotW - columns.size * colW + shiftFrac * colW
             columns.forEachIndexed { xi, col ->
                 val x = startX + xi * colW
                 for (b in 0 until nBins) {

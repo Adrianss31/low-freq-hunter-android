@@ -1,5 +1,6 @@
 package io.github.adrianss31.lowfreqhunter.ui
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,10 +81,13 @@ fun SegMeter(
     thrFrac: Float? = null,
     segments: Int = 24,
 ) {
+    // il riempimento insegue il target con una molla: i segmenti si accendono
+    // in sequenza fluida invece di saltare al nuovo valore 4 volte al secondo
+    val fill by animateFloatAsState(frac.coerceIn(0f, 1f), label = "segmeter")
     Row(modifier.height(14.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
         val thrIdx = thrFrac?.let { (it * segments).toInt().coerceIn(0, segments - 1) }
         for (i in 0 until segments) {
-            val on = i < (frac * segments).toInt()
+            val on = i < (fill * segments).toInt()
             val c = when {
                 i == thrIdx -> Color.White
                 on -> color
