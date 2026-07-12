@@ -21,7 +21,6 @@
   .badge.rec{color:var(--rec);border-color:var(--rec)}
   .badge.listen{color:var(--amber);border-color:var(--amber)}
   .badge.off{color:var(--faint)}
-  .badge.online{color:var(--accent);border-color:var(--accent)}
   #hdrinfo{color:var(--dim)}
   .grid{display:grid;grid-template-columns:340px 1fr;gap:12px}
   @media(max-width:900px){.grid{grid-template-columns:1fr}}
@@ -29,17 +28,27 @@
   .meter{display:flex;align-items:center;gap:8px;margin:7px 0}
   .meter .lbl{width:64px;font-size:12px}
   .meter .bar{flex:1;height:14px;background:var(--surface2);position:relative;overflow:hidden}
-  .meter .fill{position:absolute;left:0;top:0;bottom:0;width:0%}
+  .meter .fill{position:absolute;left:0;top:0;bottom:0;width:0%;transition:width .6s linear}
   .meter .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff8}
   .meter .val{width:60px;text-align:right;font-size:12px;color:var(--dim)}
   .meter .val.hot{color:var(--rec)}
   table{width:100%;border-collapse:collapse;font-size:12px}
   td,th{padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
   th{color:var(--dim);font-weight:400;font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+  tr.evrow{cursor:pointer}
+  tr.evrow:hover td{background:var(--surface2)}
+  tr.evday td{color:var(--faint);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
+      padding-top:10px;border-bottom:1px solid var(--border)}
   button,select{background:var(--surface2);color:var(--text);border:1px solid var(--border);
        font-family:inherit;font-size:12px;letter-spacing:1px;padding:9px 16px;cursor:pointer}
   button:hover{border-color:var(--accent)}
   button.big{width:100%;color:var(--amber);border-color:var(--amber);font-size:13px;padding:12px}
+  select.mini{padding:4px 8px;font-size:11px}
+  .chip{display:inline-block;padding:3px 9px;border:1px solid var(--border);font-size:11px;
+       letter-spacing:1px;cursor:pointer;user-select:none;background:var(--surface2)}
+  .chip.off{opacity:.32;text-decoration:line-through}
+  .chip.dim{opacity:.5}
+  .chip.sel{background:var(--surface);outline:1px solid currentColor}
   #tip{position:fixed;pointer-events:none;background:#000d;border:1px solid var(--border);
        padding:6px 9px;font-size:12px;display:none;z-index:9;white-space:pre}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -48,6 +57,12 @@
   label.chk{color:var(--dim);font-size:12px;cursor:pointer;user-select:none}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
   .dot.on{background:var(--accent)} .dot.err{background:var(--rec)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--rec);
+       margin-right:7px;animation:pulse 1.2s infinite}
+  .ongoing{border:1px solid var(--rec);background:#ff445511;padding:7px 9px;margin-bottom:6px;
+       display:flex;align-items:center;gap:8px;font-size:12px}
+  .ongoing .grow{flex:1}
 </style>
 </head>
 <body>
@@ -72,6 +87,7 @@
         <span class="caps">hz dominante</span>
         <span style="flex:1"></span><span id="activetxt" class="caps"></span>
       </div>
+      <div id="spl" class="caps" style="color:var(--amber);margin-bottom:4px"></div>
       <div id="meters"></div>
       <div style="margin-top:12px" class="row">
         <button class="big" id="markerbtn" style="flex:1">▲ LO SENTO ADESSO (marker)</button>
@@ -87,16 +103,20 @@
       <div id="exports" style="margin-top:8px;font-size:12px"></div>
     </div>
     <div class="panel">
-      <div class="caps" style="margin-bottom:6px">Eventi <span id="evcount"></span></div>
-      <div style="max-height:340px;overflow-y:auto">
-        <table><thead><tr><th>banda</th><th>inizio → fine</th><th>durata</th><th>picco</th></tr></thead>
+      <div class="caps" style="margin-bottom:8px">Eventi <span id="evcount"></span></div>
+      <div id="ongoing"></div>
+      <div id="evchips" class="row" style="gap:6px;margin-bottom:8px"></div>
+      <div style="max-height:420px;overflow-y:auto">
+        <table><thead><tr><th>banda</th><th>inizio → fine</th><th>durata</th><th>picco</th><th>media</th></tr></thead>
         <tbody id="evrows"></tbody></table>
       </div>
+      <div class="caps" style="margin-top:8px;color:var(--faint)">click su un evento per vederlo nel grafico livelli</div>
     </div>
   </div>
   <div>
     <div class="panel">
-      <div class="caps">Spettro · 0–250 Hz <span id="specinfo" style="float:right"></span></div>
+      <div class="caps">Spettro · 0–250 Hz <span style="color:var(--faint)">· linea ambra = picco recente</span>
+        <span id="specinfo" style="float:right"></span></div>
       <canvas id="spec" height="240" style="margin-top:8px"></canvas>
     </div>
     <div class="panel">
@@ -104,8 +124,18 @@
       <canvas id="wf" height="300" style="margin-top:8px;cursor:crosshair"></canvas>
     </div>
     <div class="panel">
-      <div class="caps">Livelli · −85…−45 dBFS</div>
-      <canvas id="chart" height="260" style="margin-top:8px;cursor:crosshair"></canvas>
+      <div class="row" style="margin-bottom:6px">
+        <span class="caps">Livelli · −85…−45 dBFS</span>
+        <span style="flex:1"></span>
+        <span id="chchips" class="row" style="gap:6px"></span>
+        <label class="chk"><input type="checkbox" id="smoothcurves"> curve smussate</label>
+        <select id="winsel" class="mini">
+          <option value="600">10 min</option><option value="1800">30 min</option>
+          <option value="3600">1 h</option><option value="10800">3 h</option>
+          <option value="all">tutto</option>
+        </select>
+      </div>
+      <canvas id="chart" height="260" style="cursor:crosshair"></canvas>
     </div>
   </div>
 </div>
@@ -124,30 +154,49 @@ function wfColor(v){ v=Math.max(0,Math.min(1,v))*(WF_STOPS.length-1);
   return `rgb(${a[0]+(b[0]-a[0])*f|0},${a[1]+(b[1]-a[1])*f|0},${a[2]+(b[2]-a[2])*f|0})`; }
 const Q_MIN=-110, Q_MAX=-20, WF_FMIN=20, WF_FMAX=200;
 const fmtT = s => new Date(s*1000).toLocaleTimeString('it-IT');
+const fmtDay = s => new Date(s*1000).toLocaleDateString('it-IT',{weekday:'short',day:'numeric',month:'numeric'});
 const fmtDur = s => { s=Math.max(0,s|0); const h=s/3600|0,m=(s%3600)/60|0;
   return h>0?`${h}h ${String(m).padStart(2,'0')}m`:(m>0?`${m}m ${String(s%60).padStart(2,'0')}s`:`${s}s`); };
+const fmtAgo = s => s<60?`${s|0}s fa`:(s<3600?`${s/60|0}m fa`:`${s/3600|0}h ${((s%3600)/60)|0}m fa`);
 const el = id => document.getElementById(id);
 
 // ── stato applicazione ─────────────────────────────────────────────────────
 let cfg=null, state=null, viewing='live';
 let S={samples:[],events:[],gaps:[],markers:[],slices:[],sessionId:null,startedAt:0,label:'',endedAt:null};
 
+// preferenze persistite
+const store = (k,v)=>{ try{localStorage.setItem('lfh.'+k, JSON.stringify(v));}catch(_){}};
+const load  = (k,d)=>{ try{const v=localStorage.getItem('lfh.'+k); return v==null?d:JSON.parse(v);}catch(_){return d;} };
+let hidden = new Set(load('hidden',[]));      // canali nascosti nel grafico ('ref' incluso)
+let evBand = 'all';                            // filtro sezione eventi
+let chartWin = load('win','all');              // finestra temporale grafico
+let smoothCurves = load('smooth',true);
+el('winsel').value=chartWin;
+el('smoothcurves').checked=smoothCurves;
+el('beep').checked=load('beep',false);
+el('notif').checked=load('notif',false);
+el('beep').addEventListener('change',()=>store('beep',el('beep').checked));
+
 // ── connessione ────────────────────────────────────────────────────────────
-function setConn(ok){ el('conndot').className='dot '+(ok?'on':'err');
-  el('conntxt').textContent = ok ? 'in linea' : 'telefono non raggiungibile'; }
+let lastOkMs=0;
+function setConn(ok){
+  el('conndot').className='dot '+(ok?'on':'err');
+  el('conntxt').textContent = ok ? 'in linea'
+    : 'non raggiungibile' + (lastOkMs?` · ultimo dato ${fmtAgo((Date.now()-lastOkMs)/1000)}`:'');
+}
 
 // ── polling live ───────────────────────────────────────────────────────────
 async function pollState(){
   try{
-    state = await api('/api/state'); cfg = state.cfg; setConn(true);
-    renderHeader(); renderMeters();
+    state = await api('/api/state'); cfg = state.cfg; lastOkMs=Date.now(); setConn(true);
+    renderHeader(); renderMeters(); renderChips(); renderOngoing();
     document.title = (state.running ? (state.mode==='rec'?'● REC ':'◦ LIVE ') : '') +
       state.eventsCount + ' ev · Low-Freq Hunter';
-  }catch(e){ setConn(false); }
+  }catch(e){ setConn(false); renderOngoing(); }
 }
 async function pollSpectrum(){
   if(viewing!=='live') return;
-  try{ const s = await api('/api/spectrum'); drawSpectrum(s); }catch(e){}
+  try{ const s = await api('/api/spectrum'); setSpectrum(s); }catch(e){}
 }
 async function pollSession(){
   if(viewing!=='live') return;
@@ -185,7 +234,8 @@ function onNewEvent(e){
       {body:`${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`});
   }
 }
-el('notif').addEventListener('change',()=>{ if(el('notif').checked) Notification.requestPermission(); });
+el('notif').addEventListener('change',()=>{ store('notif',el('notif').checked);
+  if(el('notif').checked) Notification.requestPermission(); });
 
 // ── header + meters ────────────────────────────────────────────────────────
 const bandLabel = id => { if(id==='V') return 'Vibraz.';
@@ -205,13 +255,34 @@ function renderMeters(){
   el('activetxt').textContent = act.length
     ? '● sopra soglia da '+fmtDur(state.now/1000-Math.min(...act.map(a=>a[1]))) : 'silenzio';
   el('activetxt').style.color = act.length ? 'var(--rec)' : 'var(--faint)';
+  // stima SPL (se calibrata sul telefono): banda più forte
+  const off = cfg?.splOffsetDb;
+  let spl='';
+  if(off!=null && state.running){
+    const lv=Object.values(state.levels||{});
+    if(lv.length) spl='≈ '+Math.round(Math.max(...lv)+off)+' dB SPL · banda più forte (stima)';
+  }
+  el('spl').textContent = spl;
   const rows=[];
   for(const b of (cfg?.bands||[])){
     const lvl = state.levels?.[b.id];
     rows.push(meterRow(b.label, bandColor(b.id), lvl, b.thr, b.id in (state.activeBands||{})));
   }
   if(cfg?.vibEnabled) rows.push(meterRow('Vibraz.', bandColor('V'), state.vibDb, cfg.vibThr, 'V' in (state.activeBands||{})));
-  el('meters').innerHTML = rows.join('');
+  // aggiorna in place: ricreare i nodi ogni secondo ucciderebbe la transizione CSS
+  const m=el('meters');
+  if(m.childElementCount!==rows.length){ m.innerHTML=rows.join(''); }
+  else rows.forEach((r,i)=>{
+    const cur=m.children[i], t=document.createElement('div'); t.innerHTML=r;
+    const n=t.firstElementChild;
+    cur.querySelector('.fill').style.width=n.querySelector('.fill').style.width;
+    cur.querySelector('.fill').style.background=n.querySelector('.fill').style.background;
+    cur.querySelector('.thr').style.left=n.querySelector('.thr').style.left;
+    const v=cur.querySelector('.val'), nv=n.querySelector('.val');
+    v.textContent=nv.textContent; v.className=nv.className;
+    const l=cur.querySelector('.lbl'), nl=n.querySelector('.lbl');
+    l.textContent=nl.textContent; l.style.color=nl.style.color;
+  });
 }
 function meterRow(label,color,lvl,thr,active){
   const frac = Math.max(0,Math.min(1,((lvl??-120)+120)/120))*100;
@@ -250,33 +321,105 @@ el('sessel').addEventListener('change', async ()=>{
      slices:(d.slices||[]).map(s=>({t:s.t,bins:Uint8Array.from(atob(s.b64),c=>c.charCodeAt(0))})),
      sessionId:d.sessionId,startedAt:d.startedAt,label:d.label||'',endedAt:d.endedAt};
   if(d.cfg) cfg = {bands:(d.cfg.bands||[]).filter(b=>b.enabled!==false).map(b=>({id:b.id,center:b.center,lo:Math.max(1,b.center-b.width),hi:b.center+b.width,thr:b.thr,label:(b.center|0)+' Hz'})),
-                   vibEnabled:d.cfg.vib?.enabled, vibThr:d.cfg.vib?.thr};
-  redrawAll();
+                   vibEnabled:d.cfg.vib?.enabled, vibThr:d.cfg.vib?.thr, splOffsetDb:cfg?.splOffsetDb};
+  renderChips(); renderOngoing(); redrawAll();
 });
 
-// ── statistiche + export + eventi ──────────────────────────────────────────
+// ── filtri canali (grafico) + filtro eventi ────────────────────────────────
+function channels(){ const c=(cfg?.bands||[]).map(b=>b.id); if(cfg?.vibEnabled) c.push('V'); return c; }
+let chipsSig='';
+function renderChips(){
+  const chs=channels();
+  const sig=chs.join(',');
+  if(sig===chipsSig) return;
+  chipsSig=sig;
+  el('chchips').innerHTML = chs.map(id=>
+    `<span class="chip ${hidden.has(id)?'off':''}" data-ch="${id}" style="color:${bandColor(id)};border-color:${bandColor(id)}">${bandLabel(id)}</span>`
+  ).join('') + `<span class="chip ${hidden.has('ref')?'off':''}" data-ch="ref" style="color:var(--dim)">ref</span>`;
+  el('evchips').innerHTML = `<span class="chip ${evBand==='all'?'sel':'dim'}" data-ev="all">tutte</span>` +
+    chs.map(id=>`<span class="chip ${evBand===id?'sel':'dim'}" data-ev="${id}" style="color:${bandColor(id)};border-color:${bandColor(id)}">${bandLabel(id)}</span>`).join('');
+}
+el('chchips').addEventListener('click',e=>{
+  const ch=e.target.dataset?.ch; if(!ch) return;
+  hidden.has(ch)?hidden.delete(ch):hidden.add(ch);
+  store('hidden',[...hidden]); chipsSig=''; renderChips(); drawChart();
+});
+el('evchips').addEventListener('click',e=>{
+  const b=e.target.dataset?.ev; if(!b) return;
+  evBand=b; chipsSig=''; renderChips(); renderEvents();
+});
+el('winsel').addEventListener('change',()=>{ chartWin=el('winsel').value; store('win',chartWin); drawChart(); });
+el('smoothcurves').addEventListener('change',()=>{ smoothCurves=el('smoothcurves').checked; store('smooth',smoothCurves); drawChart(); });
+
+// ── statistiche + export ───────────────────────────────────────────────────
 function renderStats(){
+  const nowS=Date.now()/1000;
   const endS = S.endedAt ? S.endedAt/1000 : (S.samples.length? S.samples[S.samples.length-1].t : S.startedAt/1000);
   const tot = endS - S.startedAt/1000;
   const noisy = S.events.reduce((a,e)=>a+e.durationS,0);
   const peak = S.events.reduce((a,e)=>Math.max(a,e.peakDb??-999),-999);
   const gapS = S.gaps.reduce((a,g)=>a+(g.endT-g.startT),0);
+  const lastEv = S.events.length ? Math.max(...S.events.map(e=>e.endT)) : null;
+  const byBand={}; for(const e of S.events) byBand[e.band]=(byBand[e.band]||0)+1;
+  const bandsLine = Object.keys(byBand).sort().map(id=>
+    `<span style="color:${bandColor(id)}">${bandLabel(id)}&thinsp;${byBand[id]}</span>`).join(' · ');
+  const off = cfg?.splOffsetDb;
   el('stats').innerHTML =
-    `durata <b>${fmtDur(tot)}</b> · sopra soglia <b>${fmtDur(noisy)}</b><br>`+
-    `eventi <b>${S.events.length}</b> · marker <b>${S.markers.length}</b> · picco <b>${peak>-999?peak.toFixed(1)+' dBFS':'—'}</b>`+
+    `durata <b>${fmtDur(tot)}</b> · sopra soglia <b>${fmtDur(noisy)}</b> (${tot>0?(noisy/tot*100).toFixed(1):0}%)<br>`+
+    `eventi <b>${S.events.length}</b>${bandsLine?' · '+bandsLine:''}<br>`+
+    `marker <b>${S.markers.length}</b> · picco <b>${peak>-999?peak.toFixed(1)+' dBFS':'—'}</b>`+
+    (peak>-999&&off!=null?` <span style="color:var(--amber)">≈ ${Math.round(peak+off)} dB SPL</span>`:'')+
+    (viewing==='live'?`<br>ultimo evento <b>${lastEv?fmtAgo(nowS-lastEv):'—'}</b>`:'')+
     (gapS>0?`<br><span style="color:var(--amber)">⚠ monitoraggio interrotto ${fmtDur(gapS)} (${S.gaps.length} gap)</span>`:'');
   el('exports').innerHTML = S.sessionId ?
     `<span class="caps">export:</span> <a href="/api/session/${S.sessionId}.json?k=${K}">json</a> ·
      <a href="/api/session/${S.sessionId}/eventi.csv?k=${K}">eventi csv</a> ·
      <a href="/api/session/${S.sessionId}/campioni.csv?k=${K}">campioni csv</a>` : '';
 }
-function renderEvents(){
-  el('evcount').textContent = S.events.length ? '· '+S.events.length : '';
-  el('evrows').innerHTML = [...S.events].sort((a,b)=>b.startT-a.startT).map(e=>
-    `<tr><td style="color:${bandColor(e.band)}">${bandLabel(e.band)}</td>
-     <td>${fmtT(e.startT)} → ${fmtT(e.endT)}</td><td>${fmtDur(e.durationS)}</td>
-     <td>${e.peakDb!=null?e.peakDb.toFixed(1):'—'}</td></tr>`).join('');
+
+// ── eventi: in corso + lista pulita ────────────────────────────────────────
+function renderOngoing(){
+  const box=el('ongoing');
+  if(viewing!=='live' || !state?.running || !state.activeBands || !Object.keys(state.activeBands).length){
+    box.innerHTML=''; return;
+  }
+  box.innerHTML = Object.entries(state.activeBands).map(([id,since])=>
+    `<div class="ongoing"><span class="pulse"></span>
+     <span style="color:${bandColor(id)}">${bandLabel(id)}</span>
+     <span class="grow" style="color:var(--dim)">in corso dalle ${fmtT(since)}</span>
+     <b>${fmtDur(state.now/1000-since)}</b></div>`).join('');
 }
+let evList=[];
+function renderEvents(){
+  const filtered = S.events.filter(e=>evBand==='all'||e.band===evBand);
+  el('evcount').textContent = filtered.length ? '· '+filtered.length : '';
+  evList=[...filtered].sort((a,b)=>b.startT-a.startT);
+  const rows=[]; let lastDay='';
+  evList.forEach((e,i)=>{
+    const day=fmtDay(e.startT);
+    if(day!==lastDay){ lastDay=day; rows.push(`<tr class="evday"><td colspan="5">${day}</td></tr>`); }
+    rows.push(`<tr class="evrow" data-i="${i}">
+      <td style="color:${bandColor(e.band)}">■ ${bandLabel(e.band)}</td>
+      <td>${fmtT(e.startT)} → ${fmtT(e.endT)}</td><td>${fmtDur(e.durationS)}</td>
+      <td>${e.peakDb!=null?e.peakDb.toFixed(1):'—'}</td>
+      <td style="color:var(--dim)">${e.avgDb!=null?e.avgDb.toFixed(1):'—'}</td></tr>`);
+  });
+  el('evrows').innerHTML = rows.join('') ||
+    '<tr><td colspan="5" style="color:var(--faint)">nessun evento sopra soglia</td></tr>';
+}
+let hl=null; // evidenziazione evento sul grafico
+el('evrows').addEventListener('click',e=>{
+  const tr=e.target.closest('tr.evrow'); if(!tr) return;
+  const ev=evList[+tr.dataset.i]; if(!ev) return;
+  // se l'evento è fuori dalla finestra corrente, passa a "tutto"
+  if(chartWin!=='all' && S.samples.length &&
+     ev.startT < S.samples[S.samples.length-1].t - +chartWin){
+    chartWin='all'; el('winsel').value='all'; store('win','all');
+  }
+  hl={a:ev.startT,b:ev.endT,until:Date.now()+4000};
+  drawChart(); setTimeout(drawChart,4200);
+  el('chart').scrollIntoView({behavior:'smooth',block:'nearest'});
+});
 
 // ── canvas: DPI + tooltip ──────────────────────────────────────────────────
 function fitCanvas(c){
@@ -291,12 +434,34 @@ function tip(x,y,txt){ const t=el('tip'); if(!txt){t.style.display='none';return
   t.textContent=txt; t.style.display='block';
   t.style.left=Math.min(x+14,innerWidth-t.offsetWidth-8)+'px'; t.style.top=(y+14)+'px'; }
 
-// ── spettro ────────────────────────────────────────────────────────────────
-function drawSpectrum(s){
+// ── spettro: interpolato a 60 fps + picco recente ──────────────────────────
+let specTarget=null, specDisp=null, specPeak=null, specBinHz=1, lastRaf=0;
+function setSpectrum(s){
+  if(!s.spec||!s.spec.length){ specTarget=null; el('specinfo').textContent='(monitoraggio fermo)'; drawSpectrumCanvas(); return; }
+  el('specinfo').textContent='';
+  specBinHz=s.binHz; specTarget=Float32Array.from(s.spec);
+}
+function raf(t){
+  requestAnimationFrame(raf);
+  const dt=Math.min(0.1,(t-lastRaf)/1000)||0; lastRaf=t;
+  if(!specTarget) return;
+  if(!specDisp||specDisp.length!==specTarget.length){
+    specDisp=Float32Array.from(specTarget);
+    specPeak=Float32Array.from(specTarget);
+  }else{
+    const k=1-Math.exp(-dt/0.18);
+    for(let i=0;i<specDisp.length;i++){
+      specDisp[i]+=(specTarget[i]-specDisp[i])*k;
+      specPeak[i]=Math.max(specPeak[i]-3*dt, specDisp[i]);   // hold col decadimento 3 dB/s
+    }
+  }
+  drawSpectrumCanvas();
+}
+requestAnimationFrame(raf);
+function drawSpectrumCanvas(){
   const [g,w,h]=fitCanvas(el('spec'));
   g.fillStyle='#000'; g.fillRect(0,0,w,h);
-  if(!s.spec||!s.spec.length){ el('specinfo').textContent='(monitoraggio fermo)'; return; }
-  el('specinfo').textContent='';
+  if(!specDisp||!specTarget) return;
   const XMAX=250, DBMIN=-100, DBMAX=-20;
   const xOf=f=>f/XMAX*w, yOf=db=>h-(Math.max(DBMIN,Math.min(DBMAX,db))-DBMIN)/(DBMAX-DBMIN)*h;
   g.strokeStyle='#2a2a30'; g.fillStyle='#666'; g.font='10px monospace';
@@ -308,9 +473,12 @@ function drawSpectrum(s){
     g.strokeStyle=c; g.lineWidth=2.5; g.beginPath(); g.moveTo(xOf(b.lo),yOf(b.thr)); g.lineTo(xOf(b.hi),yOf(b.thr)); g.stroke();
     g.fillStyle=c; g.fillText(b.center|0, xOf(b.lo)+3, 12);
   }
+  const n=Math.min(specDisp.length,Math.floor(XMAX/specBinHz));
+  g.strokeStyle='#ffaa0055'; g.lineWidth=1; g.beginPath();
+  for(let i=0;i<n;i++){ const x=xOf(i*specBinHz), y=yOf(specPeak[i]); i?g.lineTo(x,y):g.moveTo(x,y); }
+  g.stroke();
   g.strokeStyle='#00d4aa'; g.lineWidth=1.6; g.beginPath();
-  const n=Math.min(s.spec.length,Math.floor(XMAX/s.binHz));
-  for(let i=0;i<n;i++){ const x=xOf(i*s.binHz), y=yOf(s.spec[i]); i?g.lineTo(x,y):g.moveTo(x,y); }
+  for(let i=0;i<n;i++){ const x=xOf(i*specBinHz), y=yOf(specDisp[i]); i?g.lineTo(x,y):g.moveTo(x,y); }
   g.stroke(); g.lineWidth=1;
 }
 
@@ -355,9 +523,18 @@ el('wf').addEventListener('mouseleave',()=>tip());
 
 // ── grafico livelli ────────────────────────────────────────────────────────
 const CH={L:44,R:8,T:8,B:20, DBMIN:-85, DBMAX:-45};
+function chartRange(){
+  if(!S.samples.length) return {t0:0,t1:1,i0:0};
+  const t1=S.samples[S.samples.length-1].t;
+  let t0=S.samples[0].t;
+  if(chartWin!=='all') t0=Math.max(t0, t1-+chartWin);
+  let lo=0,hi=S.samples.length-1;                       // primo campione >= t0
+  while(lo<hi){ const mid=(lo+hi)>>1; S.samples[mid].t<t0?lo=mid+1:hi=mid; }
+  return {t0,t1,i0:lo};
+}
 function chartGeom(w,h){
-  const t0=S.samples.length?S.samples[0].t:0, t1=S.samples.length?S.samples[S.samples.length-1].t:1;
-  return {t0,t1,xOf:t=>CH.L+(t-t0)/Math.max(1,t1-t0)*(w-CH.L-CH.R),
+  const {t0,t1,i0}=chartRange();
+  return {t0,t1,i0,xOf:t=>CH.L+(t-t0)/Math.max(1,t1-t0)*(w-CH.L-CH.R),
     yOf:db=>CH.T+(1-(Math.max(CH.DBMIN,Math.min(CH.DBMAX,db))-CH.DBMIN)/(CH.DBMAX-CH.DBMIN))*(h-CH.T-CH.B)};
 }
 function drawChart(){
@@ -365,27 +542,47 @@ function drawChart(){
   g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
   if(S.samples.length<2){ g.fillStyle='#5a5a64'; g.font='12px monospace';
     g.fillText('in attesa di campioni…',12,24); return; }
-  const {t0,t1,xOf,yOf}=chartGeom(w,h);
+  const {t0,t1,i0,xOf,yOf}=chartGeom(w,h);
+  const clampX=x=>Math.max(CH.L,Math.min(w-CH.R,x));
   g.fillStyle='#ffffff14';
-  for(const gp of S.gaps) g.fillRect(xOf(gp.startT),CH.T,Math.max(xOf(gp.endT)-xOf(gp.startT),2),h-CH.T-CH.B);
+  for(const gp of S.gaps){ if(gp.endT<t0) continue;
+    g.fillRect(clampX(xOf(gp.startT)),CH.T,Math.max(clampX(xOf(gp.endT))-clampX(xOf(gp.startT)),2),h-CH.T-CH.B); }
   g.strokeStyle='#2a2a30'; g.fillStyle='#666'; g.font='10px monospace';
   for(let db=CH.DBMIN+5;db<=CH.DBMAX;db+=10){ g.beginPath();g.moveTo(CH.L,yOf(db));g.lineTo(w-CH.R,yOf(db));g.stroke(); g.fillText(db,6,yOf(db)+3); }
   for(let i=0;i<=5;i++){ const t=t0+(t1-t0)*i/5; g.fillText(fmtT(t),Math.min(xOf(t),w-58),h-6); }
-  for(const b of (cfg?.bands||[])){ g.strokeStyle=bandColor(b.id); g.setLineDash([5,5]);
+  for(const b of (cfg?.bands||[])){ if(hidden.has(b.id)) continue;
+    g.strokeStyle=bandColor(b.id); g.setLineDash([5,5]);
     g.beginPath(); g.moveTo(CH.L,yOf(b.thr)); g.lineTo(w-CH.R,yOf(b.thr)); g.stroke(); g.setLineDash([]); }
-  const stride=Math.max(1,Math.floor(S.samples.length/((w-CH.L)*2)));
-  const plot=(color,width,get)=>{ g.strokeStyle=color; g.lineWidth=width; g.beginPath(); let st=false;
-    for(let i=0;i<S.samples.length;i+=stride){ const v=get(S.samples[i]);
-      if(v==null){st=false;continue;} const x=xOf(S.samples[i].t),y=yOf(v);
+  const nVis=S.samples.length-i0;
+  const stride=Math.max(1,Math.floor(nVis/((w-CH.L)*2)));
+  const alpha=smoothCurves?Math.min(1,stride/20+0.05):1;   // EMA ~20 s per la sola visualizzazione
+  const plot=(color,width,get)=>{ g.strokeStyle=color; g.lineWidth=width; g.beginPath(); let st=false,em=null;
+    for(let i=i0;i<S.samples.length;i+=stride){ const v=get(S.samples[i]);
+      if(v==null){st=false;em=null;continue;}
+      em=(em==null||alpha>=1)?v:em+(v-em)*alpha;
+      const x=xOf(S.samples[i].t),y=yOf(em);
       st?g.lineTo(x,y):g.moveTo(x,y); st=true; } g.stroke(); g.lineWidth=1; };
-  plot('#ffffff30',1.2,s=>s.ref);
-  for(const b of (cfg?.bands||[])) plot(bandColor(b.id),1.8,s=>s.lv?.[b.id]);
-  if(cfg?.vibEnabled) plot(bandColor('V'),1.8,s=>s.vib);
-  // corsie eventi in alto
-  for(const e of S.events){ g.fillStyle=bandColor(e.band);
-    g.fillRect(xOf(e.startT),CH.T,Math.max(xOf(e.endT)-xOf(e.startT),3),4); }
+  if(!hidden.has('ref')) plot('#ffffff30',1.2,s=>s.ref);
+  for(const b of (cfg?.bands||[])) if(!hidden.has(b.id)) plot(bandColor(b.id),1.8,s=>s.lv?.[b.id]);
+  if(cfg?.vibEnabled && !hidden.has('V')) plot(bandColor('V'),1.8,s=>s.vib);
+  // corsie eventi in alto (chiusi + in corso)
+  for(const e of S.events){ if(e.endT<t0||hidden.has(e.band)) continue;
+    g.fillStyle=bandColor(e.band);
+    g.fillRect(clampX(xOf(e.startT)),CH.T,Math.max(clampX(xOf(e.endT))-clampX(xOf(e.startT)),3),4); }
+  if(viewing==='live' && state?.activeBands){
+    for(const [id,since] of Object.entries(state.activeBands)){ if(hidden.has(id)) continue;
+      g.fillStyle=bandColor(id);
+      g.fillRect(clampX(xOf(since)),CH.T,Math.max(xOf(t1)-clampX(xOf(since)),3),4); }
+  }
   g.fillStyle='#fff';
-  for(const m of S.markers){ const x=xOf(m); g.beginPath(); g.moveTo(x,CH.T); g.lineTo(x-5,CH.T+9); g.lineTo(x+5,CH.T+9); g.fill(); }
+  for(const m of S.markers){ if(m<t0) continue;
+    const x=xOf(m); g.beginPath(); g.moveTo(x,CH.T); g.lineTo(x-5,CH.T+9); g.lineTo(x+5,CH.T+9); g.fill(); }
+  // evidenziazione evento cliccato
+  if(hl && Date.now()<hl.until && hl.b>=t0){
+    g.fillStyle='#ffffff2e';
+    g.fillRect(clampX(xOf(hl.a)),CH.T,Math.max(clampX(xOf(hl.b))-clampX(xOf(hl.a)),3),h-CH.T-CH.B);
+    g.strokeStyle='#fff'; g.strokeRect(clampX(xOf(hl.a)),CH.T,Math.max(clampX(xOf(hl.b))-clampX(xOf(hl.a)),3),h-CH.T-CH.B);
+  }
 }
 el('chart').addEventListener('mousemove',e=>{
   if(S.samples.length<2){tip();return;}
@@ -401,6 +598,7 @@ el('chart').addEventListener('mousemove',e=>{
   for(const b of (cfg?.bands||[])){ const v=s.lv?.[b.id]; if(v!=null) txt+=`\n${b.label}  ${v.toFixed(1)} dBFS`; }
   if(s.vib!=null) txt+=`\nVibraz.  ${s.vib.toFixed(1)}`;
   txt+=`\nref  ${s.ref.toFixed(1)}`;
+  if(s.dom!=null) txt+=`\ndominante  ${s.dom.toFixed(1)} Hz`;
   tip(e.clientX,e.clientY,txt);
 });
 el('chart').addEventListener('mouseleave',()=>tip());

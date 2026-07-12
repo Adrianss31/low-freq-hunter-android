@@ -158,7 +158,7 @@ class MonitorService : Service() {
         var lanUrl: String? = null
         if (settings.lan.enabled && settings.lan.token.isNotBlank()) {
             runCatching {
-                val srv = LanServer(this, dao, settings.lan.token, settings.lan.port) { cfg }
+                val srv = LanServer(this, dao, settings.lan.token, settings.lan.port, { cfg }, { settings.calib })
                 srv.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
                 lanServer = srv
                 // a schermo spento Android addormenta il Wi-Fi: il PC vedrebbe

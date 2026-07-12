@@ -2,6 +2,7 @@ package io.github.adrianss31.lowfreqhunter.server
 
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import io.github.adrianss31.lowfreqhunter.data.CalibCfg
 import io.github.adrianss31.lowfreqhunter.data.EventEntity
 import io.github.adrianss31.lowfreqhunter.data.Exporter
 import io.github.adrianss31.lowfreqhunter.data.LfhDao
@@ -49,6 +50,7 @@ class LanServer(
     private val token: String,
     port: Int,
     private val cfgProvider: () -> EngineCfg,
+    private val calibProvider: () -> CalibCfg? = { null },
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -130,6 +132,7 @@ class LanServer(
                 put("minOnS", cfg.minOnS)
                 put("minOffS", cfg.minOffS)
                 put("hystDb", cfg.hystDb)
+                calibProvider()?.takeIf { it.enabled }?.let { put("splOffsetDb", it.offsetDb) }
             }
         }.toString()
     }
@@ -253,6 +256,7 @@ class LanServer(
                         put("t", s.t)
                         put("lv", parseOrNull(s.lvJson))
                         put("ref", round1(s.ref))
+                        put("dom", round1(s.domHz))
                         s.vibDb?.let { put("vib", round1(it)) }
                     },
                 )
