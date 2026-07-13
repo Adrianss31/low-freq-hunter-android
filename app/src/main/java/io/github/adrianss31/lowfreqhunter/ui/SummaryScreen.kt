@@ -590,7 +590,7 @@ private fun applyZoom(
     val fullSpan = (f1 - f0).coerceAtLeast(1.0)
     val c0 = (cur?.first ?: full.first).toDouble()
     val c1 = (cur?.second ?: full.second).toDouble()
-    val span = ((c1 - c0) / zf.coerceAtLeast(0.01)).coerceIn(minOf(60.0, fullSpan), fullSpan)
+    val span = ((c1 - c0) / zf.coerceAtLeast(0.01f)).coerceIn(minOf(60.0, fullSpan), fullSpan)
     if (span >= fullSpan - 1) return null
     val frac = (cx / w).coerceIn(0f, 1f).toDouble()
     val tC = c0 + frac * (c1 - c0)
