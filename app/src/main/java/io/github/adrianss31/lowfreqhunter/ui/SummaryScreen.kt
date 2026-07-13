@@ -92,7 +92,7 @@ fun SummaryScreen() {
         ) {
             CapsLabel("Sessioni salvate", color = Lfh.Text)
             Spacer(Modifier.height(2.dp))
-            RecurrencePanel(sessions, dao)
+            RecurrencePanel(sessions, dao, settings.engine)
             if (sessions.isEmpty()) {
                 Panel(Modifier.fillMaxWidth()) {
                     Text("Nessuna sessione.\nAvvia un log notturno dalla scheda NOTTE.", color = Lfh.TextDim, fontSize = 13.sp, lineHeight = 20.sp)

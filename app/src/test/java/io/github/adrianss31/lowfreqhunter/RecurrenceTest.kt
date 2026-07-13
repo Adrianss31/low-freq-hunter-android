@@ -51,4 +51,23 @@ class RecurrenceTest {
         // fascia fuori sessione (12:00) non monitorata
         assertEquals(0f, night.coverS[24], 0f)
     }
+
+    @Test
+    fun attivitaSeparataPerBanda() {
+        // due bande attive in fasce diverse: il filtro le distingue, "tutte" le somma
+        val night = Recurrence.night(
+            "n1", 0, 4 * 3600,
+            listOf(
+                EventData("A", 0, 1800, 1800, -40.0, -45.0),
+                EventData("B", 3600, 3600 + 900, 900, -40.0, -45.0),
+            ),
+            utc,
+        )
+        assertEquals(1800f, night.active("A")[0], 0f)
+        assertEquals(0f, night.active("A")[2], 0f)
+        assertEquals(900f, night.active("B")[2], 0f)
+        assertEquals(0f, night.active("C")[0], 0f)   // banda mai vista: tutta zero
+        assertEquals(1800f, night.active(null)[0], 0f)
+        assertEquals(900f, night.activeS[2], 0f)
+    }
 }

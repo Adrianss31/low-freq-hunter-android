@@ -18,9 +18,19 @@ object Recurrence {
 
     class Night(
         val label: String,
-        val coverS: FloatArray,   // secondi monitorati per fascia
-        val activeS: FloatArray,  // secondi sopra soglia per fascia
-    )
+        val coverS: FloatArray,                    // secondi monitorati per fascia
+        val activeByBand: Map<String, FloatArray>, // secondi sopra soglia per fascia, per canale
+    ) {
+        /** Attività della sola banda [band], o di tutte le bande sommate se null. */
+        fun active(band: String? = null): FloatArray {
+            if (band != null) return activeByBand[band] ?: FloatArray(BUCKETS)
+            val sum = FloatArray(BUCKETS)
+            for (a in activeByBand.values) for (i in a.indices) sum[i] += a[i]
+            return sum
+        }
+
+        val activeS: FloatArray get() = active(null)
+    }
 
     /**
      * Distribuisce l'intervallo [aS, bS) (epoch secondi) sulle fasce orarie
@@ -53,7 +63,7 @@ object Recurrence {
         tz: TimeZone = TimeZone.getDefault(),
     ): Night {
         val cover = FloatArray(BUCKETS)
-        val active = FloatArray(BUCKETS)
+        val active = HashMap<String, FloatArray>()
         addInterval(cover, startS, endS, tz)
         for (e in events) {
             if (e.band == Channels.GAP) {
@@ -61,7 +71,7 @@ object Recurrence {
                 addInterval(g, e.startT, e.endT, tz)
                 for (i in g.indices) cover[i] = (cover[i] - g[i]).coerceAtLeast(0f)
             } else {
-                addInterval(active, e.startT, e.endT, tz)
+                addInterval(active.getOrPut(e.band) { FloatArray(BUCKETS) }, e.startT, e.endT, tz)
             }
         }
         return Night(label, cover, active)
