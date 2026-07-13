@@ -120,12 +120,13 @@
       <canvas id="spec" height="240" style="margin-top:8px"></canvas>
     </div>
     <div class="panel">
-      <div class="caps">Spettrogramma · 20–200 Hz · tutta la sessione</div>
+      <div class="caps">Spettrogramma · 20–200 Hz <span style="color:var(--faint)">· trascina = zoom · doppio click = tutto</span></div>
       <canvas id="wf" height="300" style="margin-top:8px;cursor:crosshair"></canvas>
     </div>
     <div class="panel">
       <div class="row" style="margin-bottom:6px">
-        <span class="caps">Livelli · −85…−45 dBFS</span>
+        <span class="caps">Livelli · −85…−45 dBFS <span style="color:var(--faint)">· trascina = zoom</span></span>
+        <span id="zoominfo" class="caps" style="color:var(--accent)"></span>
         <span style="flex:1"></span>
         <span id="chchips" class="row" style="gap:6px"></span>
         <label class="chk"><input type="checkbox" id="smoothcurves"> curve smussate</label>
@@ -171,6 +172,8 @@ let hidden = new Set(load('hidden',[]));      // canali nascosti nel grafico ('r
 let evBand = 'all';                            // filtro sezione eventi
 let chartWin = load('win','all');              // finestra temporale grafico
 let smoothCurves = load('smooth',true);
+let zoomWin = null;                            // zoom da trascinamento {t0,t1}, condiviso wf+livelli
+let dragSel = null;                            // selezione in corso {id,a,b,moved}
 el('winsel').value=chartWin;
 el('smoothcurves').checked=smoothCurves;
 el('beep').checked=load('beep',false);
@@ -230,7 +233,7 @@ function onNewEvent(e){
     o.start(); o.stop(ac.currentTime+0.18);
   }catch(_){}}
   if(el('notif').checked && Notification.permission==='granted'){
-    new Notification('Low-Freq Hunter — evento '+bandLabel(e.band),
+    new Notification('Low-Freq Hunter — evento '+(e.kind==='pulse'?'pulsante ':'')+bandLabel(e.band),
       {body:`${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`});
   }
 }
@@ -291,7 +294,7 @@ function meterRow(label,color,lvl,thr,active){
   return `<div class="meter"><span class="lbl" style="color:${color}">${label}</span>
     <span class="bar"><span class="fill" style="width:${frac}%;background:${color}"></span>
     <span class="thr" style="left:${thrF}%"></span></span>
-    <span class="val ${active?'hot':''}">${active?'● attiva':v}</span></div>`;
+    <span class="val ${active?'hot':''}">${active?'● ':''}${v}</span></div>`;
 }
 
 // ── marker remoto ──────────────────────────────────────────────────────────
@@ -314,6 +317,7 @@ async function loadSessions(){
 }
 el('sessel').addEventListener('change', async ()=>{
   viewing = el('sessel').value;
+  zoomWin = null;
   if(viewing==='live'){ S={samples:[],events:[],gaps:[],markers:[],slices:[],sessionId:null,startedAt:0,label:'',endedAt:null}; el('markerbtn').disabled=false; await pollSession(); return; }
   el('markerbtn').disabled=true;
   const d = await api('/api/session/'+viewing);
@@ -348,7 +352,7 @@ el('evchips').addEventListener('click',e=>{
   const b=e.target.dataset?.ev; if(!b) return;
   evBand=b; chipsSig=''; renderChips(); renderEvents();
 });
-el('winsel').addEventListener('change',()=>{ chartWin=el('winsel').value; store('win',chartWin); drawChart(); });
+el('winsel').addEventListener('change',()=>{ chartWin=el('winsel').value; store('win',chartWin); zoomWin=null; redrawAll(); });
 el('smoothcurves').addEventListener('change',()=>{ smoothCurves=el('smoothcurves').checked; store('smooth',smoothCurves); drawChart(); });
 
 // ── statistiche + export ───────────────────────────────────────────────────
@@ -399,7 +403,7 @@ function renderEvents(){
     const day=fmtDay(e.startT);
     if(day!==lastDay){ lastDay=day; rows.push(`<tr class="evday"><td colspan="5">${day}</td></tr>`); }
     rows.push(`<tr class="evrow" data-i="${i}">
-      <td style="color:${bandColor(e.band)}">■ ${bandLabel(e.band)}</td>
+      <td style="color:${bandColor(e.band)}" ${e.kind==='pulse'?'title="pulsante: raffiche brevi e irregolari"':''}>■ ${bandLabel(e.band)}${e.kind==='pulse'?' ∿':''}</td>
       <td>${fmtT(e.startT)} → ${fmtT(e.endT)}</td><td>${fmtDur(e.durationS)}</td>
       <td>${e.peakDb!=null?e.peakDb.toFixed(1):'—'}</td>
       <td style="color:var(--dim)">${e.avgDb!=null?e.avgDb.toFixed(1):'—'}</td></tr>`);
@@ -411,7 +415,8 @@ let hl=null; // evidenziazione evento sul grafico
 el('evrows').addEventListener('click',e=>{
   const tr=e.target.closest('tr.evrow'); if(!tr) return;
   const ev=evList[+tr.dataset.i]; if(!ev) return;
-  // se l'evento è fuori dalla finestra corrente, passa a "tutto"
+  // se l'evento è fuori dallo zoom o dalla finestra corrente, allarga
+  if(zoomWin && (ev.startT<zoomWin.t0 || ev.endT>zoomWin.t1)) zoomWin=null;
   if(chartWin!=='all' && S.samples.length &&
      ev.startT < S.samples[S.samples.length-1].t - +chartWin){
     chartWin='all'; el('winsel').value='all'; store('win','all');
@@ -484,15 +489,18 @@ function drawSpectrumCanvas(){
 
 // ── waterfall ──────────────────────────────────────────────────────────────
 const WF_GUTTER=40;
+// slice visibili con lo zoom attivo (una slice a t copre (t-30, t])
+function wfVisible(){ return zoomWin ? S.slices.filter(s=>s.t>zoomWin.t0 && s.t-30<zoomWin.t1) : S.slices; }
+function wfCols(n){ return zoomWin ? Math.max(n,1) : Math.max(n,60); }
 function drawWaterfall(){
   const [g,w,h]=fitCanvas(el('wf'));
   g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
   g.fillStyle='#000'; g.fillRect(WF_GUTTER,0,w-WF_GUTTER,h);
-  const sl=S.slices; if(!sl.length) return;
+  const sl=wfVisible(); if(!sl.length) return;
   let lo=255,hi=0;
   for(const s of sl) for(const v of s.bins){ if(v<lo)lo=v; if(v>hi)hi=v; }
   if(hi-lo<20) hi=lo+20;
-  const cols=Math.max(sl.length,60), colW=(w-WF_GUTTER)/cols, nB=sl[0].bins.length, rowH=h/nB;
+  const cols=wfCols(sl.length), colW=(w-WF_GUTTER)/cols, nB=sl[0].bins.length, rowH=h/nB;
   for(let xi=0;xi<sl.length;xi++){ const x=WF_GUTTER+xi*colW;
     for(let b=0;b<nB;b++){ g.fillStyle=wfColor((sl[xi].bins[b]-lo)/(hi-lo));
       g.fillRect(x,h-(b+1)*rowH,colW+1,rowH+1); } }
@@ -504,14 +512,17 @@ function drawWaterfall(){
   }
   // marker in alto
   g.fillStyle='#fff';
-  for(const m of S.markers){ const xi=nearestSliceIdx(m); if(xi<0) continue;
+  for(const m of S.markers){ if(zoomWin&&(m<zoomWin.t0||m>zoomWin.t1)) continue;
+    const xi=nearestSliceIdx(sl,m); if(xi<0) continue;
     const x=WF_GUTTER+(xi+0.5)*colW; g.beginPath(); g.moveTo(x,0); g.lineTo(x-5,9); g.lineTo(x+5,9); g.fill(); }
+  drawDragSel(g,'wf',0,h);
 }
-function nearestSliceIdx(t){ const sl=S.slices; if(!sl.length) return -1;
+function nearestSliceIdx(sl,t){ if(!sl.length) return -1;
   let best=0,bd=1e18; for(let i=0;i<sl.length;i++){const d=Math.abs(sl[i].t-t); if(d<bd){bd=d;best=i;}} return best; }
 el('wf').addEventListener('mousemove',e=>{
-  const r=el('wf').getBoundingClientRect(); const sl=S.slices; if(!sl.length){tip();return;}
-  const w=r.width,h=r.height, cols=Math.max(sl.length,60), colW=(w-WF_GUTTER)/cols;
+  if(dragSel){tip();return;}
+  const r=el('wf').getBoundingClientRect(); const sl=wfVisible(); if(!sl.length){tip();return;}
+  const w=r.width,h=r.height, cols=wfCols(sl.length), colW=(w-WF_GUTTER)/cols;
   const xi=Math.floor((e.clientX-r.left-WF_GUTTER)/colW); if(xi<0||xi>=sl.length){tip();return;}
   const nB=sl[0].bins.length;
   const bin=Math.max(0,Math.min(nB-1,Math.floor((1-(e.clientY-r.top)/h)*nB)));
@@ -524,17 +535,19 @@ el('wf').addEventListener('mouseleave',()=>tip());
 // ── grafico livelli ────────────────────────────────────────────────────────
 const CH={L:44,R:8,T:8,B:20, DBMIN:-85, DBMAX:-45};
 function chartRange(){
-  if(!S.samples.length) return {t0:0,t1:1,i0:0};
-  const t1=S.samples[S.samples.length-1].t;
-  let t0=S.samples[0].t;
-  if(chartWin!=='all') t0=Math.max(t0, t1-+chartWin);
+  if(!S.samples.length) return {t0:0,t1:1,i0:0,i1:-1};
+  let t0=S.samples[0].t, t1=S.samples[S.samples.length-1].t;
+  if(zoomWin){ t0=zoomWin.t0; t1=zoomWin.t1; }
+  else if(chartWin!=='all') t0=Math.max(t0, t1-+chartWin);
   let lo=0,hi=S.samples.length-1;                       // primo campione >= t0
   while(lo<hi){ const mid=(lo+hi)>>1; S.samples[mid].t<t0?lo=mid+1:hi=mid; }
-  return {t0,t1,i0:lo};
+  let l2=lo,h2=S.samples.length-1;                      // ultimo campione <= t1
+  while(l2<h2){ const mid=(l2+h2+1)>>1; S.samples[mid].t<=t1?l2=mid:h2=mid-1; }
+  return {t0,t1,i0:lo,i1:S.samples[l2].t<=t1?l2:lo-1};
 }
 function chartGeom(w,h){
-  const {t0,t1,i0}=chartRange();
-  return {t0,t1,i0,xOf:t=>CH.L+(t-t0)/Math.max(1,t1-t0)*(w-CH.L-CH.R),
+  const {t0,t1,i0,i1}=chartRange();
+  return {t0,t1,i0,i1,xOf:t=>CH.L+(t-t0)/Math.max(1,t1-t0)*(w-CH.L-CH.R),
     yOf:db=>CH.T+(1-(Math.max(CH.DBMIN,Math.min(CH.DBMAX,db))-CH.DBMIN)/(CH.DBMAX-CH.DBMIN))*(h-CH.T-CH.B)};
 }
 function drawChart(){
@@ -542,7 +555,7 @@ function drawChart(){
   g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
   if(S.samples.length<2){ g.fillStyle='#5a5a64'; g.font='12px monospace';
     g.fillText('in attesa di campioni…',12,24); return; }
-  const {t0,t1,i0,xOf,yOf}=chartGeom(w,h);
+  const {t0,t1,i0,i1,xOf,yOf}=chartGeom(w,h);
   const clampX=x=>Math.max(CH.L,Math.min(w-CH.R,x));
   g.fillStyle='#ffffff14';
   for(const gp of S.gaps){ if(gp.endT<t0) continue;
@@ -553,11 +566,11 @@ function drawChart(){
   for(const b of (cfg?.bands||[])){ if(hidden.has(b.id)) continue;
     g.strokeStyle=bandColor(b.id); g.setLineDash([5,5]);
     g.beginPath(); g.moveTo(CH.L,yOf(b.thr)); g.lineTo(w-CH.R,yOf(b.thr)); g.stroke(); g.setLineDash([]); }
-  const nVis=S.samples.length-i0;
+  const nVis=Math.max(0,i1-i0+1);
   const stride=Math.max(1,Math.floor(nVis/((w-CH.L)*2)));
   const alpha=smoothCurves?Math.min(1,stride/20+0.05):1;   // EMA ~20 s per la sola visualizzazione
   const plot=(color,width,get)=>{ g.strokeStyle=color; g.lineWidth=width; g.beginPath(); let st=false,em=null;
-    for(let i=i0;i<S.samples.length;i+=stride){ const v=get(S.samples[i]);
+    for(let i=i0;i<=i1;i+=stride){ const v=get(S.samples[i]);
       if(v==null){st=false;em=null;continue;}
       em=(em==null||alpha>=1)?v:em+(v-em)*alpha;
       const x=xOf(S.samples[i].t),y=yOf(em);
@@ -566,16 +579,16 @@ function drawChart(){
   for(const b of (cfg?.bands||[])) if(!hidden.has(b.id)) plot(bandColor(b.id),1.8,s=>s.lv?.[b.id]);
   if(cfg?.vibEnabled && !hidden.has('V')) plot(bandColor('V'),1.8,s=>s.vib);
   // corsie eventi in alto (chiusi + in corso)
-  for(const e of S.events){ if(e.endT<t0||hidden.has(e.band)) continue;
+  for(const e of S.events){ if(e.endT<t0||e.startT>t1||hidden.has(e.band)) continue;
     g.fillStyle=bandColor(e.band);
     g.fillRect(clampX(xOf(e.startT)),CH.T,Math.max(clampX(xOf(e.endT))-clampX(xOf(e.startT)),3),4); }
   if(viewing==='live' && state?.activeBands){
-    for(const [id,since] of Object.entries(state.activeBands)){ if(hidden.has(id)) continue;
+    for(const [id,since] of Object.entries(state.activeBands)){ if(hidden.has(id)||since>t1) continue;
       g.fillStyle=bandColor(id);
-      g.fillRect(clampX(xOf(since)),CH.T,Math.max(xOf(t1)-clampX(xOf(since)),3),4); }
+      g.fillRect(clampX(xOf(since)),CH.T,Math.max(clampX(xOf(t1))-clampX(xOf(since)),3),4); }
   }
   g.fillStyle='#fff';
-  for(const m of S.markers){ if(m<t0) continue;
+  for(const m of S.markers){ if(m<t0||m>t1) continue;
     const x=xOf(m); g.beginPath(); g.moveTo(x,CH.T); g.lineTo(x-5,CH.T+9); g.lineTo(x+5,CH.T+9); g.fill(); }
   // evidenziazione evento cliccato
   if(hl && Date.now()<hl.until && hl.b>=t0){
@@ -583,9 +596,59 @@ function drawChart(){
     g.fillRect(clampX(xOf(hl.a)),CH.T,Math.max(clampX(xOf(hl.b))-clampX(xOf(hl.a)),3),h-CH.T-CH.B);
     g.strokeStyle='#fff'; g.strokeRect(clampX(xOf(hl.a)),CH.T,Math.max(clampX(xOf(hl.b))-clampX(xOf(hl.a)),3),h-CH.T-CH.B);
   }
+  drawDragSel(g,'chart',CH.T,h-CH.T-CH.B);
 }
+
+// ── zoom con trascinamento (condiviso tra spettrogramma e livelli) ─────────
+function drawDragSel(g,id,y,hh){
+  if(!dragSel||dragSel.id!==id||!dragSel.moved) return;
+  const a=Math.min(dragSel.a,dragSel.b), b=Math.max(dragSel.a,dragSel.b);
+  g.fillStyle='#00d4aa22'; g.fillRect(a,y,b-a,hh);
+  g.strokeStyle='#00d4aa88'; g.strokeRect(a,y,b-a,hh);
+}
+function setupDragZoom(id, xToT, redraw){
+  const c=el(id);
+  c.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    const r=c.getBoundingClientRect();
+    dragSel={id, a:e.clientX-r.left, b:e.clientX-r.left, moved:false};
+    e.preventDefault();
+  });
+  c.addEventListener('mousemove',e=>{
+    if(!dragSel||dragSel.id!==id) return;
+    const r=c.getBoundingClientRect();
+    dragSel.b=e.clientX-r.left;
+    if(Math.abs(dragSel.b-dragSel.a)>4) dragSel.moved=true;
+    redraw();
+  });
+  const up=()=>{
+    if(!dragSel||dragSel.id!==id) return;
+    const sel=dragSel; dragSel=null;
+    if(sel.moved && Math.abs(sel.b-sel.a)>8){
+      const r=c.getBoundingClientRect();
+      let ta=xToT(Math.min(sel.a,sel.b), r.width), tb=xToT(Math.max(sel.a,sel.b), r.width);
+      if(tb-ta<30){ const m=(ta+tb)/2; ta=m-15; tb=m+15; }   // zoom minimo 30 s
+      zoomWin={t0:Math.floor(ta), t1:Math.ceil(tb)};
+    }
+    redrawAll();
+  };
+  c.addEventListener('mouseup',up);
+  c.addEventListener('mouseleave',()=>{ if(dragSel&&dragSel.id===id){ dragSel=null; redraw(); } });
+  c.addEventListener('dblclick',()=>{ zoomWin=null; redrawAll(); });
+}
+setupDragZoom('chart',(x,w)=>{
+  const {t0,t1}=chartRange();
+  return t0+Math.max(0,Math.min(1,(x-CH.L)/(w-CH.L-CH.R)))*(t1-t0);
+},drawChart);
+setupDragZoom('wf',(x,w)=>{
+  const sl=wfVisible(); if(!sl.length) return 0;
+  const cols=wfCols(sl.length), colW=(w-WF_GUTTER)/cols;
+  const xi=Math.max(0,Math.min(sl.length-1e-9,(x-WF_GUTTER)/colW));
+  const i=Math.floor(xi);
+  return sl[i].t-30+(xi-i)*30;   // interpola dentro la slice da 30 s
+},drawWaterfall);
 el('chart').addEventListener('mousemove',e=>{
-  if(S.samples.length<2){tip();return;}
+  if(dragSel||S.samples.length<2){tip();return;}
   const r=el('chart').getBoundingClientRect();
   const {t0,t1}=chartGeom(r.width,r.height);
   const frac=(e.clientX-r.left-CH.L)/(r.width-CH.L-CH.R); if(frac<0||frac>1){tip();return;}
@@ -604,7 +667,10 @@ el('chart').addEventListener('mousemove',e=>{
 el('chart').addEventListener('mouseleave',()=>tip());
 
 // ── redraw + loop ──────────────────────────────────────────────────────────
-function redrawAll(){ drawWaterfall(); drawChart(); renderStats(); renderEvents(); }
+function redrawAll(){
+  el('zoominfo').textContent = zoomWin ? `⧉ zoom ${fmtT(zoomWin.t0)}–${fmtT(zoomWin.t1)} · doppio click = esci` : '';
+  drawWaterfall(); drawChart(); renderStats(); renderEvents();
+}
 window.addEventListener('resize',redrawAll);
 setInterval(pollState,1000);
 setInterval(pollSpectrum,1000);

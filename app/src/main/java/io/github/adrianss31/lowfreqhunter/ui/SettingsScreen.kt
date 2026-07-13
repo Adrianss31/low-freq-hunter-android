@@ -160,6 +160,19 @@ fun SettingsScreen() {
                     onPlus = { updEngine { it.copy(minOffS = (it.minOffS + 1).coerceAtMost(300)) } },
                 )
             }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Rilevatore pulsazioni ∿", color = Lfh.Text, fontSize = 13.sp)
+                    CapsLabel(
+                        "raffiche brevi e irregolari sopra soglia (troppo corte per \"ON dopo\"): " +
+                            "≥3 in 90 s diventano un evento pulsante",
+                        color = Lfh.TextFaint,
+                    )
+                }
+                HwSwitch(settings.engine.pulseEnabled) {
+                    updEngine { it.copy(pulseEnabled = !it.pulseEnabled) }
+                }
+            }
         }
 
         // programmazione oraria

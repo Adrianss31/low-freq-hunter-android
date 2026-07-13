@@ -37,6 +37,7 @@ data class EngineCfg(
     val smoothNight: Double = 0.3,
     val smoothLive: Double = 0.5,
     val vib: VibCfg = VibCfg(),
+    val pulseEnabled: Boolean = true,
     val clipsEnabled: Boolean = false,
     val clipSeconds: Int = 20,
     val clipsMax: Int = 12,
@@ -74,6 +75,12 @@ object Channels {
     const val GAP = "gap"
 }
 
+/** Tipo di evento: continuo (macchina a stati) o pulsante (raffiche brevi). */
+object EventKind {
+    const val STEADY = "steady"
+    const val PULSE = "pulse"
+}
+
 data class SampleData(
     val t: Long,                    // epoch secondi
     val lv: Map<String, Double>,    // livello per banda (dBFS)
@@ -90,4 +97,5 @@ data class EventData(
     val durationS: Long,
     val peakDb: Double?,
     val avgDb: Double?,
+    val kind: String = EventKind.STEADY,
 )

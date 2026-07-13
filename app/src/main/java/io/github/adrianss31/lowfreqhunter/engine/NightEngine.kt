@@ -48,6 +48,10 @@ class NightEngine(
     @Volatile var vibDb: Double? = null
 
     private val sms = HashMap<String, EventStateMachine>()
+
+    // Rilevatori di pulsazioni (raffiche brevi, sotto il minOn della SM):
+    // lavorano sui livelli istantanei a rate spettro, non sulle medie al secondo.
+    private val pulses = HashMap<String, PulseDetector>()
     private var lastTickMs = 0L
 
     // accumulatore del secondo corrente
@@ -71,6 +75,7 @@ class NightEngine(
 
     fun start(nowMs: Long) {
         sms.clear()
+        pulses.clear()
         for (b in cfg.enabledBands()) sms[b.id] = EventStateMachine(b.id)
         if (cfg.vib.enabled) sms[Channels.VIB] = EventStateMachine(Channels.VIB)
         lastTickMs = 0L
@@ -113,6 +118,15 @@ class NightEngine(
         lastDomHz = Bands.dominantHz(spec, binHz, WF_FMIN, WF_FMAX).first
 
         accumulateSlice(spec, binHz)
+
+        if (cfg.pulseEnabled) {
+            val tS = nowMs / 1000.0
+            for (b in cfg.enabledBands()) {
+                val level = lv[b.id] ?: continue
+                val pd = pulses.getOrPut(b.id) { PulseDetector(b.id, cfg.minOnS.toDouble()) }
+                pd.step(level, b.thr, cfg.hystDb, tS)?.let { sink.onEvent(it) }
+            }
+        }
 
         if (curSec == -1L) curSec = nowS
         if (nowS == curSec) {
@@ -211,6 +225,9 @@ class NightEngine(
         for (sm in sms.values) {
             sm.forceClose(fromS)?.let { sink.onEvent(it) }
         }
+        for (pd in pulses.values) {
+            pd.flush()?.let { sink.onEvent(it) }
+        }
         sink.onEvent(EventData(Channels.GAP, fromS, toS, toS - fromS, null, null))
     }
 
@@ -221,6 +238,9 @@ class NightEngine(
         if (secN > 0 && curSec != -1L) finalizeSecond(curSec)
         for (sm in sms.values) {
             sm.forceClose(endS)?.let { sink.onEvent(it) }
+        }
+        for (pd in pulses.values) {
+            pd.flush()?.let { sink.onEvent(it) }
         }
         emitSlice(endS)
         started = false

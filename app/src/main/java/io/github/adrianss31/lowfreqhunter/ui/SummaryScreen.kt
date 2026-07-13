@@ -7,7 +7,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -36,10 +40,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -55,8 +64,10 @@ import io.github.adrianss31.lowfreqhunter.data.SessionBundle
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.data.deleteSessionData
 import io.github.adrianss31.lowfreqhunter.engine.Channels
+import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -135,25 +146,55 @@ fun SummaryScreen() {
     // ── dettaglio sessione ───────────────────────────────────────────────────
     var confirmDelete by remember { mutableStateOf(false) }
 
-    // Timeline e spettrogramma renderizzati una sola volta come bitmap: lo
-    // scroll non ridisegna più nulla (fix lentezza con notti intere).
+    // Timeline e spettrogramma renderizzati come bitmap: lo scroll non
+    // ridisegna nulla (fix lentezza con notti intere). Lo zoom (pinch con
+    // due dita) cambia la finestra temporale e fa ri-renderizzare il bitmap;
+    // nell'attesa un graphicsLayer stira quello vecchio per dare feedback.
     val density = LocalDensity.current.density
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val contentPx = ((screenWidthDp - 44) * density).toInt().coerceIn(320, 1400)
-    var timelineBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
-    var waterfallBmp by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+    val tlFull = remember(b.session.id) {
+        Pair(
+            b.samples.firstOrNull()?.t ?: b.session.startedAt / 1000,
+            b.samples.lastOrNull()?.t ?: b.session.lastT,
+        )
+    }
+    val wfFull = remember(b.session.id) {
+        Pair(
+            b.slices.firstOrNull()?.let { it.t - NightEngine.SLICE_S } ?: tlFull.first,
+            b.slices.lastOrNull()?.t ?: tlFull.second,
+        )
+    }
+    // finestra zoom condivisa tra timeline e spettrogramma (null = tutto)
+    var zoomWin by remember(b.session.id) { mutableStateOf<Pair<Long, Long>?>(null) }
+    val visSlices = remember(b.session.id, zoomWin) {
+        val z = zoomWin ?: return@remember b.slices
+        b.slices.filter { it.t > z.first && it.t - NightEngine.SLICE_S < z.second }
+    }
+    var timelineBmp by remember(b.session.id) { mutableStateOf<RenderedBmp?>(null) }
+    var waterfallBmp by remember(b.session.id) { mutableStateOf<RenderedBmp?>(null) }
     // canale mostrato in timeline: null = tutti (le curve spesso si sovrappongono)
     var selChannel by remember(b.session.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(b.session.id, selChannel) {
+    LaunchedEffect(b.session.id, selChannel, zoomWin) {
+        if (zoomWin != null) delay(70)   // durante il pinch renderizza solo alle pause
+        val win = zoomWin ?: tlFull
         withContext(Dispatchers.Default) {
-            val tl = BitmapRender.timeline(b, contentPx, (200 * density).toInt(), density, only = selChannel)
-            withContext(Dispatchers.Main) { timelineBmp = tl }
+            val tl = BitmapRender.timeline(
+                b, contentPx, (200 * density).toInt(), density,
+                only = selChannel, tLo = win.first, tHi = win.second,
+            )
+            withContext(Dispatchers.Main) { timelineBmp = RenderedBmp(tl, win.first, win.second) }
         }
     }
-    LaunchedEffect(b.session.id) {
+    LaunchedEffect(b.session.id, zoomWin) {
+        if (b.slices.isEmpty()) return@LaunchedEffect
+        if (zoomWin != null) delay(70)
+        val win = zoomWin ?: wfFull
+        val slices = visSlices
+        val minCols = if (zoomWin == null) 60 else 1
         withContext(Dispatchers.Default) {
-            val wf = if (b.slices.isNotEmpty()) BitmapRender.waterfall(b, contentPx, (WF_H_DP * density).toInt(), density) else null
-            withContext(Dispatchers.Main) { waterfallBmp = wf }
+            val wf = BitmapRender.waterfall(b, contentPx, (WF_H_DP * density).toInt(), density, slices = slices, minCols = minCols)
+            withContext(Dispatchers.Main) { waterfallBmp = RenderedBmp(wf, win.first, win.second) }
         }
     }
 
@@ -173,19 +214,51 @@ fun SummaryScreen() {
         }
 
         Panel(Modifier.fillMaxWidth()) {
-            CapsLabel("Timeline · −80…−50 dBFS")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CapsLabel("Timeline · −80…−50 dBFS", Modifier.weight(1f))
+                if (zoomWin != null) HwButton("↺ tutto") { zoomWin = null }
+            }
             Spacer(Modifier.height(6.dp))
             val tl = timelineBmp
-            if (tl != null) {
-                Image(
-                    tl.asImageBitmap(),
-                    contentDescription = "Timeline della sessione",
-                    modifier = Modifier.fillMaxWidth().height(200.dp),
-                    contentScale = ContentScale.FillBounds,
-                )
-            } else {
-                Box(Modifier.fillMaxWidth().height(200.dp).background(Lfh.Bg))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clipToBounds()
+                    .background(Lfh.Bg)
+                    .pointerInput(b.session.id) {
+                        timeGestures(full = { tlFull }, get = { zoomWin }, set = { zoomWin = it })
+                    }
+                    .pointerInput(b.session.id) {
+                        detectTapGestures(onDoubleTap = { zoomWin = null })
+                    },
+            ) {
+                if (tl != null) {
+                    Image(
+                        tl.bmp.asImageBitmap(),
+                        contentDescription = "Timeline della sessione",
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer {
+                                // feedback immediato nel pinch: stira il bitmap
+                                // vecchio finché non arriva quello nitido
+                                val z = zoomWin ?: tlFull
+                                val spanR = (tl.t1 - tl.t0).coerceAtLeast(1L).toFloat()
+                                val spanZ = (z.second - z.first).coerceAtLeast(1L).toFloat()
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                scaleX = spanR / spanZ
+                                translationX = (tl.t0 - z.first) / spanZ * size.width
+                            },
+                        contentScale = ContentScale.FillBounds,
+                    )
+                }
             }
+            Spacer(Modifier.height(4.dp))
+            CapsLabel(
+                zoomWin?.let { "zoom ${fmtClock(it.first * 1000)}–${fmtClock(it.second * 1000)} · doppio tap = tutta la sessione" }
+                    ?: "pizzica con due dita per lo zoom (vale anche sullo spettrogramma)",
+                color = Lfh.TextFaint,
+            )
             // filtro canale: le curve sovrapposte si leggono male insieme
             Spacer(Modifier.height(8.dp))
             Row(
@@ -217,59 +290,63 @@ fun SummaryScreen() {
                 Spacer(Modifier.height(6.dp))
                 val wf = waterfallBmp
                 // scrubbing: il dito seleziona una colonna (slice da 30 s) e
-                // sotto compaiono orario e livelli delle bande in quel momento
-                var scrubIdx by remember(b.session.id) { mutableStateOf<Int?>(null) }
+                // sotto compaiono orario e livelli delle bande in quel momento.
+                // Salvato come frazione orizzontale: sopravvive al cambio zoom.
+                var scrubFrac by remember(b.session.id) { mutableStateOf<Float?>(null) }
                 // stessa geometria del bitmap (BitmapRender.waterfall)
                 val gutterPx = 30f * density
-                val cols = maxOf(b.slices.size, 60)
+                val cols = maxOf(visSlices.size, if (zoomWin == null) 60 else 1)
                 val colW = (contentPx - gutterPx) / cols
-                fun idxOfX(x: Float, widthPx: Float): Int {
-                    val bx = x / widthPx * contentPx
-                    return ((bx - gutterPx) / colW).toInt().coerceIn(0, b.slices.size - 1)
+                val si = scrubFrac?.let { f ->
+                    if (visSlices.isEmpty()) null
+                    else ((f * contentPx - gutterPx) / colW).toInt().coerceIn(0, visSlices.size - 1)
                 }
-                if (wf != null) {
-                    Box(Modifier.fillMaxWidth().height(WF_H_DP.dp)) {
-                        Image(
-                            wf.asImageBitmap(),
-                            contentDescription = "Spettrogramma della sessione",
-                            modifier = Modifier.matchParentSize(),
-                            contentScale = ContentScale.FillBounds,
-                        )
-                        Canvas(
-                            Modifier
-                                .matchParentSize()
-                                .pointerInput(b.session.id) {
-                                    detectTapGestures(onPress = { pos ->
-                                        scrubIdx = idxOfX(pos.x, size.width.toFloat())
-                                    })
-                                }
-                                .pointerInput(b.session.id) {
-                                    detectDragGestures(
-                                        onDragStart = { pos ->
-                                            scrubIdx = idxOfX(pos.x, size.width.toFloat())
-                                        },
-                                    ) { change, _ ->
-                                        change.consume()
-                                        scrubIdx = idxOfX(change.position.x, size.width.toFloat())
-                                    }
-                                },
-                        ) {
-                            val si = scrubIdx ?: return@Canvas
-                            val x = (gutterPx + (si + 0.5f) * colW) / contentPx * size.width
-                            drawLine(
-                                Color.White.copy(alpha = 0.85f),
-                                Offset(x, 0f), Offset(x, size.height),
-                                strokeWidth = 2f,
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(WF_H_DP.dp)
+                        .clipToBounds()
+                        .background(Lfh.Bg)
+                        .pointerInput(b.session.id) {
+                            timeGestures(
+                                full = { wfFull }, get = { zoomWin }, set = { zoomWin = it },
+                                onScrub = { x, w -> scrubFrac = (x / w).coerceIn(0f, 1f) },
                             )
                         }
+                        .pointerInput(b.session.id) {
+                            detectTapGestures(onDoubleTap = { zoomWin = null })
+                        },
+                ) {
+                    if (wf != null) {
+                        Image(
+                            wf.bmp.asImageBitmap(),
+                            contentDescription = "Spettrogramma della sessione",
+                            modifier = Modifier
+                                .matchParentSize()
+                                .graphicsLayer {
+                                    val z = zoomWin ?: wfFull
+                                    val spanR = (wf.t1 - wf.t0).coerceAtLeast(1L).toFloat()
+                                    val spanZ = (z.second - z.first).coerceAtLeast(1L).toFloat()
+                                    transformOrigin = TransformOrigin(0f, 0.5f)
+                                    scaleX = spanR / spanZ
+                                    translationX = (wf.t0 - z.first) / spanZ * size.width
+                                },
+                            contentScale = ContentScale.FillBounds,
+                        )
                     }
-                } else {
-                    Box(Modifier.fillMaxWidth().height(WF_H_DP.dp).background(Lfh.Bg))
+                    Canvas(Modifier.matchParentSize()) {
+                        if (si == null) return@Canvas
+                        val x = (gutterPx + (si + 0.5f) * colW) / contentPx * size.width
+                        drawLine(
+                            Color.White.copy(alpha = 0.85f),
+                            Offset(x, 0f), Offset(x, size.height),
+                            strokeWidth = 2f,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
-                val si = scrubIdx
-                if (si != null && si < b.slices.size) {
-                    val t = b.slices[si].t
+                if (si != null && si < visSlices.size) {
+                    val t = visSlices[si].t
                     val idx = nearestSampleIdx(b.samples, t)
                     val parts = buildList {
                         add(fmtClock(t * 1000))
@@ -339,7 +416,9 @@ fun SummaryScreen() {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "${fmtClock(ev.startT * 1000)} → ${fmtClock(ev.endT * 1000)}",
+                            // ∿ = evento pulsante (raffiche brevi, non continuo)
+                            (if (ev.kind == "pulse") "∿ " else "") +
+                                "${fmtClock(ev.startT * 1000)} → ${fmtClock(ev.endT * 1000)}",
                             color = Lfh.Text, fontSize = 12.sp, fontFamily = MonoFont,
                             modifier = Modifier.weight(1f),
                         )
@@ -487,6 +566,72 @@ fun SummaryScreen() {
                 TextButton(onClick = { confirmDelete = false }) { Text("Annulla", color = Lfh.TextDim) }
             },
         )
+    }
+}
+
+/** Bitmap renderizzato + finestra temporale che rappresenta. */
+private class RenderedBmp(val bmp: Bitmap, val t0: Long, val t1: Long)
+
+/**
+ * Applica un passo di pinch/pan alla finestra zoom: il tempo sotto il
+ * centroide resta fermo, lo span minimo è 60 s, tornare allo span pieno
+ * azzera lo zoom (null).
+ */
+private fun applyZoom(
+    cur: Pair<Long, Long>?,
+    full: Pair<Long, Long>,
+    cx: Float,
+    w: Float,
+    panX: Float,
+    zf: Float,
+): Pair<Long, Long>? {
+    val f0 = full.first.toDouble()
+    val f1 = full.second.toDouble()
+    val fullSpan = (f1 - f0).coerceAtLeast(1.0)
+    val c0 = (cur?.first ?: full.first).toDouble()
+    val c1 = (cur?.second ?: full.second).toDouble()
+    val span = ((c1 - c0) / zf.coerceAtLeast(0.01)).coerceIn(minOf(60.0, fullSpan), fullSpan)
+    if (span >= fullSpan - 1) return null
+    val frac = (cx / w).coerceIn(0f, 1f).toDouble()
+    val tC = c0 + frac * (c1 - c0)
+    val n0 = (tC - frac * span - (panX / w) * span).coerceIn(f0, f1 - span)
+    return Pair(n0.toLong(), (n0 + span).toLong())
+}
+
+/**
+ * Gesto condiviso dei grafici di sessione: due dita = zoom/pan della
+ * finestra temporale; un dito = scrubbing se [onScrub] è passato, altrimenti
+ * resta libero per lo scroll della pagina.
+ */
+private suspend fun PointerInputScope.timeGestures(
+    full: () -> Pair<Long, Long>,
+    get: () -> Pair<Long, Long>?,
+    set: (Pair<Long, Long>?) -> Unit,
+    onScrub: ((x: Float, w: Float) -> Unit)? = null,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        onScrub?.invoke(down.position.x, size.width.toFloat())
+        var multi = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val pressed = event.changes.filter { it.pressed }
+            if (pressed.isEmpty()) break
+            if (pressed.size >= 2) {
+                multi = true
+                val zf = event.calculateZoom()
+                val pan = event.calculatePan()
+                val centroid = event.calculateCentroid()
+                set(applyZoom(get(), full(), centroid.x, size.width.toFloat(), pan.x, zf))
+                event.changes.forEach { if (it.positionChanged()) it.consume() }
+            } else if (!multi && onScrub != null) {
+                val ch = pressed[0]
+                if (ch.positionChanged()) {
+                    onScrub(ch.position.x, size.width.toFloat())
+                    ch.consume()
+                }
+            }
+        }
     }
 }
 

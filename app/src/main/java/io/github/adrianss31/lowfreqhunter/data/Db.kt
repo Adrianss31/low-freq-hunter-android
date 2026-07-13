@@ -51,6 +51,7 @@ data class EventEntity(
     val durationS: Long,
     val peakDb: Double?,
     val avgDb: Double?,
+    @ColumnInfo(defaultValue = "steady") val kind: String = "steady",  // "steady" | "pulse"
 )
 
 @Entity(tableName = "slices", primaryKeys = ["sessionId", "t"])
@@ -220,7 +221,7 @@ interface LfhDao {
         SliceEntity::class, MarkerEntity::class, ClipEntity::class,
         SurveyEntity::class, SurveyPointEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class LfhDb : RoomDatabase() {
@@ -246,12 +247,19 @@ abstract class LfhDb : RoomDatabase() {
             }
         }
 
+        // v2 → v3: tipo di evento (continuo/pulsante). Additiva.
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `events` ADD COLUMN `kind` TEXT NOT NULL DEFAULT 'steady'")
+            }
+        }
+
         @Volatile private var instance: LfhDb? = null
 
         fun get(context: Context): LfhDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(context.applicationContext, LfhDb::class.java, "lfh.db")
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }

@@ -88,18 +88,18 @@ object Exporter {
 
     // ── CSV ─────────────────────────────────────────────────────────────────
     fun eventsCsv(b: SessionBundle): String {
-        val sb = StringBuilder("index,band,center_hz,width_hz,threshold_dbfs,start_iso,end_iso,duration_s,peak_db,avg_db\n")
+        val sb = StringBuilder("index,band,center_hz,width_hz,threshold_dbfs,start_iso,end_iso,duration_s,peak_db,avg_db,kind\n")
         var n = 0
         for (ev in (b.events + b.gaps).sortedBy { it.startT }) {
             if (ev.band == Channels.GAP) {
-                sb.append(",GAP,,,,${isoUtc(ev.startT)},${isoUtc(ev.endT)},${ev.durationS},,\n")
+                sb.append(",GAP,,,,${isoUtc(ev.startT)},${isoUtc(ev.endT)},${ev.durationS},,,\n")
             } else {
                 n++
                 val bc = b.cfg.band(ev.band)
                 val thr = if (ev.band == Channels.VIB) b.cfg.vib.thr else bc?.thr
                 sb.append("$n,${ev.band},${bc?.center?.toInt() ?: ""},${bc?.width?.toInt() ?: ""},${thr ?: ""},")
                 sb.append("${isoUtc(ev.startT)},${isoUtc(ev.endT)},${ev.durationS},")
-                sb.append("${ev.peakDb?.let { "%.2f".format(Locale.US, it) } ?: ""},${ev.avgDb?.let { "%.2f".format(Locale.US, it) } ?: ""}\n")
+                sb.append("${ev.peakDb?.let { "%.2f".format(Locale.US, it) } ?: ""},${ev.avgDb?.let { "%.2f".format(Locale.US, it) } ?: ""},${ev.kind}\n")
             }
         }
         return sb.toString()
@@ -129,6 +129,7 @@ object Exporter {
             put("duration_s", e.durationS)
             e.peakDb?.let { put("peak_db", it) }
             e.avgDb?.let { put("avg_db", it) }
+            put("kind", e.kind)
         }
         val root = buildJsonObject {
             put("app", "low-freq-hunter-android")
@@ -238,8 +239,9 @@ object Exporter {
                 )
             } else {
                 n++
+                val chLbl = ((if (ev.kind == "pulse") "∿" else "") + b.cfg.channelLabel(ev.band)).padEnd(8)
                 c.drawText(
-                    "${n.toString().padEnd(4)} ${b.cfg.channelLabel(ev.band).padEnd(8)} ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${
+                    "${n.toString().padEnd(4)} $chLbl ${fmtClock(ev.startT * 1000)}    ${fmtClock(ev.endT * 1000)}    ${
                         fmtDur(ev.durationS).padEnd(10)
                     }  ${(ev.peakDb?.let { "%.1f".format(it) } ?: "—").padEnd(11)} ${ev.avgDb?.let { "%.1f".format(it) } ?: "—"}",
                     30f, ry, mono,

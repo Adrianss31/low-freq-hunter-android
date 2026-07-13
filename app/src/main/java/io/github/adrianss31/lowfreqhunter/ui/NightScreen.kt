@@ -182,13 +182,9 @@ fun NightScreen() {
                         thrFrac = ((b.thr + 120.0) / 120.0).toFloat(),
                         modifier = Modifier.weight(1f),
                     )
-                    val active = bus.activeBands.containsKey(b.id)
-                    Text(
-                        if (active) "● " + fmtDur(nowMs / 1000 - bus.activeBands[b.id]!!) else fmtDb(lvl),
-                        color = if (active) Lfh.Rec else Lfh.TextDim,
-                        fontSize = 10.sp, fontFamily = MonoFont,
-                        modifier = Modifier.width(56.dp),
-                    )
+                    // evento in corso: il dB resta leggibile, il ● rosso e la
+                    // durata sotto segnalano che si è sopra soglia
+                    ActiveDbValue(lvl = fmtDb(lvl), activeSince = bus.activeBands[b.id], nowMs = nowMs)
                 }
             }
             fmtSpl(bus.levels.values.maxOrNull(), settings.calib)?.let {
@@ -204,13 +200,7 @@ fun NightScreen() {
                         thrFrac = ((settings.engine.vib.thr + 120.0) / 120.0).toFloat(),
                         modifier = Modifier.weight(1f),
                     )
-                    val active = bus.activeBands.containsKey(Channels.VIB)
-                    Text(
-                        if (active) "● attiva" else fmtDb(bus.vibDb),
-                        color = if (active) Lfh.Rec else Lfh.TextDim,
-                        fontSize = 10.sp, fontFamily = MonoFont,
-                        modifier = Modifier.width(56.dp),
-                    )
+                    ActiveDbValue(lvl = fmtDb(bus.vibDb), activeSince = bus.activeBands[Channels.VIB], nowMs = nowMs)
                 }
             }
         }
@@ -231,6 +221,25 @@ fun NightScreen() {
                 "Puoi spegnere lo schermo: la registrazione continua." +
                     (bus.batteryPct?.let { " · Batteria $it%" } ?: ""),
                 color = Lfh.TextFaint,
+            )
+        }
+    }
+}
+
+/** Valore dB di una banda: sempre leggibile; con evento in corso diventa rosso
+ *  col ● e sotto compare da quanto la banda è sopra soglia. */
+@Composable
+private fun ActiveDbValue(lvl: String, activeSince: Long?, nowMs: Long) {
+    Column(Modifier.width(60.dp), horizontalAlignment = Alignment.End) {
+        Text(
+            if (activeSince != null) "● $lvl" else lvl,
+            color = if (activeSince != null) Lfh.Rec else Lfh.TextDim,
+            fontSize = 10.sp, fontFamily = MonoFont,
+        )
+        if (activeSince != null) {
+            Text(
+                fmtDur(nowMs / 1000 - activeSince),
+                color = Lfh.Rec, fontSize = 8.sp, fontFamily = MonoFont,
             )
         }
     }

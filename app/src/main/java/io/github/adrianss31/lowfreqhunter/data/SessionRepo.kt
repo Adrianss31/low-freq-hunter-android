@@ -102,6 +102,7 @@ class SessionRecorder(
             durationS = e.durationS,
             peakDb = e.peakDb,
             avgDb = e.avgDb,
+            kind = e.kind,
         )
         val snapshot = session.copy(eventsCount = _eventsCount.value)
         session = snapshot

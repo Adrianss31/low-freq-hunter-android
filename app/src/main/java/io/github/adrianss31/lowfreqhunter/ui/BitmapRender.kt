@@ -39,6 +39,7 @@ object BitmapRender {
      * marker. Range dB ristretto a [dbLo, dbHi] (default −80…−50: la zona
      * dove vivono soglie e segnali; il vecchio −110…−10 schiacciava tutto).
      * [only] limita curve e soglie a un solo canale (null = tutti).
+     * [tLo]/[tHi] limitano la finestra temporale (zoom); null = tutta la sessione.
      */
     fun timeline(
         b: SessionBundle,
@@ -48,6 +49,8 @@ object BitmapRender {
         dbLo: Double = -80.0,
         dbHi: Double = -50.0,
         only: String? = null,
+        tLo: Long? = null,
+        tHi: Long? = null,
     ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -61,9 +64,14 @@ object BitmapRender {
         val laneH = 16f * d
         val plotY0 = laneH * channels.size + 6 * d
         val plotH = h - plotY0 - 22 * d
-        val tMin = b.samples.first().t
-        val tMax = b.samples.last().t
+        val tMin = tLo ?: b.samples.first().t
+        val tMax = tHi ?: b.samples.last().t
         val span = maxOf(1L, tMax - tMin).toFloat()
+        // indici dei campioni visibili (lo stride va calcolato su questi)
+        var i0 = b.samples.binarySearchBy(tMin) { it.t }.let { if (it < 0) -it - 1 else it }
+        var i1 = b.samples.binarySearchBy(tMax) { it.t }.let { if (it < 0) -it - 2 else it }
+        i0 = i0.coerceIn(0, b.samples.size - 1)
+        i1 = i1.coerceIn(i0, b.samples.size - 1)
         val dbMin = dbLo
         val dbMax = dbHi
         fun xOf(t: Long) = (t - tMin) / span * w
@@ -115,7 +123,7 @@ object BitmapRender {
         }
 
         // curve: ref grigia + bande + vibrazioni
-        val stride = maxOf(1, b.samples.size / (wPx * 2))
+        val stride = maxOf(1, (i1 - i0 + 1) / (wPx * 2))
         fun plot(color: Int, width: Float, getter: (Int) -> Double?) {
             val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 this.color = color
@@ -124,8 +132,8 @@ object BitmapRender {
             }
             val path = Path()
             var started = false
-            var i = 0
-            while (i < b.samples.size) {
+            var i = i0
+            while (i <= i1) {
                 val v = getter(i)
                 if (v == null || !v.isFinite()) {
                     started = false
@@ -174,8 +182,17 @@ object BitmapRender {
     /**
      * Spettrogramma: slice quantizzate → colonne. Scala delle frequenze nel
      * gutter sinistro, FUORI dal grafico (le guide interne coprivano i dati).
+     * [slices] permette di passare un sottoinsieme (zoom); [minCols] deve
+     * combaciare con la geometria usata dallo scrubbing nella UI.
      */
-    fun waterfall(b: SessionBundle, wPx: Int, hPx: Int, d: Float): Bitmap {
+    fun waterfall(
+        b: SessionBundle,
+        wPx: Int,
+        hPx: Int,
+        d: Float,
+        slices: List<io.github.adrianss31.lowfreqhunter.data.SliceEntity> = b.slices,
+        minCols: Int = 60,
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(BG)
@@ -185,7 +202,6 @@ object BitmapRender {
         val plotW = w - gutter
         val bgP = Paint().apply { color = Color.BLACK }
         c.drawRect(gutter, 0f, w, h, bgP)
-        val slices = b.slices
         if (slices.isNotEmpty()) {
             var lo = 255
             var hi = 0
@@ -196,7 +212,7 @@ object BitmapRender {
             }
             if (hi - lo < 20) hi = lo + 20
             val nBins = slices[0].bins.size
-            val cols = maxOf(slices.size, 60)
+            val cols = maxOf(slices.size, minCols)
             val colW = plotW / cols
             val rowH = h / nBins
             val p = Paint()

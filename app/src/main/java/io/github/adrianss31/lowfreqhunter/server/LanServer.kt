@@ -272,6 +272,7 @@ class LanServer(
                         put("durationS", e.durationS)
                         e.peakDb?.let { put("peakDb", round1(it)) }
                         e.avgDb?.let { put("avgDb", round1(it)) }
+                        if (e.kind != "steady") put("kind", e.kind)
                     },
                 )
             }
