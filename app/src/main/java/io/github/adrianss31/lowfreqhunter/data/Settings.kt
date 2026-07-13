@@ -19,6 +19,18 @@ data class ScheduleCfg(
     val endMin: Int = 7 * 60,      // 07:00
 )
 
+/**
+ * Registrazione continua: la sessione non finisce mai da sola — a un'ora
+ * fissa del giorno viene chiusa e riaperta subito, senza fermare la cattura.
+ * Ogni riga della heatmap di ricorrenza diventa così un giorno completo.
+ * Pensata per un dispositivo dedicato (es. tablet in carica).
+ */
+@Serializable
+data class ContinuousCfg(
+    val enabled: Boolean = false,
+    val splitMin: Int = 0,         // minuti dalla mezzanotte (00:00)
+)
+
 /** Server LAN: dashboard consultabile dal PC mentre il telefono registra. */
 @Serializable
 data class LanCfg(
@@ -45,6 +57,7 @@ data class AppSettings(
     val specXMax: Int = 250,       // asse X spettro live (Hz)
     val sonify: Boolean = false,
     val schedule: ScheduleCfg = ScheduleCfg(),
+    val continuous: ContinuousCfg = ContinuousCfg(),
     val lan: LanCfg = LanCfg(),
     val calib: CalibCfg = CalibCfg(),
 )

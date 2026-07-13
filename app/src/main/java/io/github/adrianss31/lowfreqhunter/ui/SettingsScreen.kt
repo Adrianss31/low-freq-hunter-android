@@ -221,6 +221,35 @@ fun SettingsScreen() {
             }
         }
 
+        // registrazione continua (dispositivo dedicato)
+        CapsLabel("Registrazione continua", color = Lfh.Text)
+        Panel(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Sessione senza fine", color = Lfh.Text, fontSize = 14.sp)
+                    CapsLabel("si spezza da sola ogni giorno all'ora scelta", color = Lfh.TextFaint)
+                }
+                HwSwitch(settings.continuous.enabled) {
+                    upd { it.copy(continuous = it.continuous.copy(enabled = !it.continuous.enabled)) }
+                }
+            }
+            if (settings.continuous.enabled) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                    CapsLabel("Spezza alle", Modifier.weight(1f))
+                    Stepper(
+                        fmtHm(settings.continuous.splitMin),
+                        onMinus = { upd { it.copy(continuous = it.continuous.copy(splitMin = (it.continuous.splitMin - 30 + 1440) % 1440)) } },
+                        onPlus = { upd { it.copy(continuous = it.continuous.copy(splitMin = (it.continuous.splitMin + 30) % 1440)) } },
+                    )
+                }
+                CapsLabel(
+                    "vale per le registrazioni avviate da ora · tieni il dispositivo in carica",
+                    color = Lfh.TextFaint,
+                )
+            }
+        }
+
         // monitor dal PC (server LAN)
         CapsLabel("Monitor dal PC", color = Lfh.Text)
         Panel(Modifier.fillMaxWidth()) {

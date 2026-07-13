@@ -81,11 +81,17 @@ class MonitorService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var capture: CaptureEngine? = null
-    private var engine: NightEngine? = null
-    private var recorder: SessionRecorder? = null
+
+    // motore e recorder vengono sostituiti a caldo dal rollover della
+    // registrazione continua: letti anche dal thread di cattura
+    @Volatile private var engine: NightEngine? = null
+    @Volatile private var recorder: SessionRecorder? = null
     private var vib: VibrationEngine? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var cfg: EngineCfg = EngineCfg()
+    private var contCfg: io.github.adrianss31.lowfreqhunter.data.ContinuousCfg =
+        io.github.adrianss31.lowfreqhunter.data.ContinuousCfg()
+    private var nextSplitMs = 0L
     private var running = false
     private var listenMode = false
     private var evCount = 0
@@ -100,6 +106,31 @@ class MonitorService : Service() {
     private val uiRef = Ema(UI_TAU_S)
     private val uiVib = Ema(UI_TAU_S)
     private val uiDom = MovingMedian(12) // ~3 s a 4 spettri/s
+
+    // il sink legge [recorder] dal campo: il rollover della registrazione
+    // continua lo sostituisce a caldo senza toccare motore e cattura
+    private val sink = object : NightEngine.Sink {
+        override fun onSample(s: SampleData) {
+            recorder?.onSample(s)
+        }
+
+        override fun onEvent(e: EventData) {
+            if (e.band != Channels.GAP) evCount++
+            recorder?.onEvent(e)
+            MonitorBus.events.value = MonitorBus.events.value + e
+            updateNotification()
+        }
+
+        override fun onSlice(t: Long, bins: ByteArray) {
+            recorder?.onSlice(t, bins)
+            MonitorBus.slices.value = MonitorBus.slices.value + Pair(t, bins)
+        }
+
+        override fun onEventStart(band: String, startT: Long) {
+            maybeStartClip(band, startT)
+            updateNotification()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -131,6 +162,8 @@ class MonitorService : Service() {
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
         cfg = settings.engine
+        contCfg = settings.continuous
+        nextSplitMs = if (contCfg.enabled && !listenOnly) nextSplitAfter(System.currentTimeMillis()) else 0L
 
         createChannel()
         val notif = buildNotification("In avvio…")
@@ -184,42 +217,19 @@ class MonitorService : Service() {
             lanUrl = lanUrl,
         )
 
-        val sink = object : NightEngine.Sink {
-            override fun onSample(s: SampleData) {
-                rec?.onSample(s)
-            }
-
-            override fun onEvent(e: EventData) {
-                if (e.band != Channels.GAP) evCount++
-                rec?.onEvent(e)
-                MonitorBus.events.value = MonitorBus.events.value + e
-                updateNotification()
-            }
-
-            override fun onSlice(t: Long, bins: ByteArray) {
-                rec?.onSlice(t, bins)
-                MonitorBus.slices.value = MonitorBus.slices.value + Pair(t, bins)
-            }
-
-            override fun onEventStart(band: String, startT: Long) {
-                maybeStartClip(band, startT)
-                updateNotification()
-            }
-        }
-
         val eng = NightEngine(cfg, sink)
         engine = eng
         eng.batteryPct = readBattery()
         eng.start(System.currentTimeMillis())
 
-        if (!startCapture(cap, eng)) {
+        if (!startCapture(cap)) {
             stopMonitoring()
             return
         }
 
         if (cfg.vib.enabled) {
             val v = VibrationEngine(this)
-            if (v.start({ db -> eng.vibDb = db })) vib = v
+            if (v.start({ db -> engine?.vibDb = db })) vib = v
         }
 
         // batteria nel motore + refresh notifica + watchdog cattura: se il
@@ -228,14 +238,15 @@ class MonitorService : Service() {
         // documentato come gap dal NightEngine.
         scope.launch {
             while (running) {
-                eng.batteryPct = readBattery()
+                engine?.batteryPct = readBattery()
                 wakeLock?.acquire(WAKELOCK_TIMEOUT_MS) // rinnovo (ref counting off)
+                if (nextSplitMs > 0 && System.currentTimeMillis() >= nextSplitMs) rollover()
                 val c = capture
                 if (c != null && System.currentTimeMillis() - c.lastDataMs > 20_000) {
                     c.stop()
                     val fresh = CaptureEngine(this@MonitorService, cfg.fftSize, cfg.smoothNight)
                     capture = fresh
-                    startCapture(fresh, eng)
+                    startCapture(fresh)
                 }
                 updateNotification()
                 delay(60_000)
@@ -255,11 +266,62 @@ class MonitorService : Service() {
         }
     }
 
-    private fun startCapture(cap: CaptureEngine, eng: NightEngine): Boolean =
+    private fun startCapture(cap: CaptureEngine): Boolean =
         cap.start(scope) { spec, binHz, nowMs ->
-            eng.processSpectrum(spec, binHz, nowMs)
-            publishLive(spec, binHz, nowMs, eng)
+            // dal campo, non catturato: il rollover sostituisce il motore
+            engine?.let { eng ->
+                eng.processSpectrum(spec, binHz, nowMs)
+                publishLive(spec, binHz, nowMs, eng)
+            }
         }
+
+    /**
+     * Rollover della registrazione continua: chiude sessione e motore e ne
+     * apre di nuovi nello stesso istante, senza fermare la cattura. Gli
+     * eventi ancora aperti vengono finalizzati nella sessione che si chiude.
+     */
+    private fun rollover() {
+        val cap = capture ?: return
+        val now = System.currentTimeMillis()
+        nextSplitMs = nextSplitAfter(now)
+        capture?.pcmTap = null
+        clipWriter?.let { runCatching { it.close() } }
+        clipWriter = null
+        engine?.stop(now)
+        recorder?.close()
+
+        evCount = 0
+        clipCount = 0
+        uiDom.reset()
+        val dao = LfhDb.get(this).dao()
+        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
+        recorder = rec
+        MonitorBus.resetSession()
+        MonitorBus.state.value = MonitorBus.state.value.copy(
+            sessionId = rec.sessionId,
+            startedAt = rec.startedAt,
+            eventsCount = 0,
+            activeBands = emptyMap(),
+        )
+        val eng = NightEngine(cfg, sink)
+        eng.batteryPct = readBattery()
+        eng.start(now)
+        engine = eng
+        updateNotification()
+    }
+
+    /** Prossima occorrenza dell'ora di spezzamento dopo [nowMs] (locale). */
+    private fun nextSplitAfter(nowMs: Long): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = nowMs
+            set(java.util.Calendar.HOUR_OF_DAY, contCfg.splitMin / 60)
+            set(java.util.Calendar.MINUTE, contCfg.splitMin % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        if (cal.timeInMillis <= nowMs) cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        return cal.timeInMillis
+    }
 
     /** Stato istantaneo per la UI (schermate Live e Notte), smussato: i
      *  numeri e i meter respirano invece di saltellare a ogni spettro. */
