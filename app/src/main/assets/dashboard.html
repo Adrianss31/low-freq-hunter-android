@@ -63,6 +63,20 @@
   .ongoing{border:1px solid var(--rec);background:#ff445511;padding:7px 9px;margin-bottom:6px;
        display:flex;align-items:center;gap:8px;font-size:12px}
   .ongoing .grow{flex:1}
+  .rulerow{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px}
+  .rulerow .desc{flex:1;line-height:1.4}
+  .rulerow .desc .sub{color:var(--faint);font-size:10px}
+  .rulerow a{color:var(--dim);text-decoration:none;cursor:pointer;padding:2px 4px}
+  .rulerow a:hover{color:var(--accent)}
+  .rulerow .chip{min-width:34px;text-align:center}
+  input[type=number],input[type=time]{background:var(--surface2);color:var(--text);border:1px solid var(--border);
+       font-family:inherit;font-size:11px;padding:3px 5px;width:58px}
+  input[type=time]{width:78px}
+  #ruleedit .frm{border:1px solid var(--accent);padding:10px;margin-top:8px;display:flex;flex-direction:column;gap:9px;font-size:12px}
+  #sysrules label.chk{display:flex;align-items:center;gap:6px;margin:4px 0;flex-wrap:wrap}
+  .nlogrow{border-bottom:1px solid var(--border);padding:3px 0;color:var(--dim)}
+  .nlogrow b{color:var(--text);font-weight:600}
+  .nlogrow .nt{color:var(--faint)}
 </style>
 </head>
 <body>
@@ -92,10 +106,30 @@
       <div style="margin-top:12px" class="row">
         <button class="big" id="markerbtn" style="flex:1">▲ LO SENTO ADESSO (marker)</button>
       </div>
-      <div style="margin-top:10px" class="row">
-        <label class="chk"><input type="checkbox" id="beep"> beep sugli eventi</label>
+    </div>
+    <div class="panel">
+      <div class="caps" style="margin-bottom:8px">Notifiche e trigger <span id="mutebadge" style="color:var(--amber)"></span></div>
+      <div class="row" style="margin-bottom:10px">
         <label class="chk"><input type="checkbox" id="notif"> notifiche desktop</label>
+        <select id="mutesel" class="mini">
+          <option value="0">audio attivo</option>
+          <option value="30">muto 30 min</option>
+          <option value="60">muto 1 h</option>
+          <option value="480">muto 8 h</option>
+        </select>
+        <button id="testnotif" style="padding:5px 10px;font-size:11px">prova</button>
       </div>
+      <div class="caps" style="margin-bottom:2px;color:var(--faint)">sistema</div>
+      <div id="sysrules" style="margin-bottom:10px"></div>
+      <div class="caps" style="margin-bottom:2px;color:var(--faint)">regole</div>
+      <div id="rulelist"></div>
+      <div id="ruleedit"></div>
+      <button id="addrule" style="width:100%;margin-top:8px;padding:7px">+ nuova regola</button>
+      <div class="row" style="margin-top:12px;margin-bottom:4px">
+        <span class="caps">Registro notifiche <span id="nlogcount"></span></span><span style="flex:1"></span>
+        <a href="#" id="clearlog" style="font-size:11px;color:var(--dim)">svuota</a>
+      </div>
+      <div id="nlog" style="max-height:190px;overflow-y:auto;font-size:11px;line-height:1.6"></div>
     </div>
     <div class="panel">
       <div class="caps" style="margin-bottom:8px">Statistiche</div>
@@ -176,9 +210,7 @@ let zoomWin = null;                            // zoom da trascinamento {t0,t1},
 let dragSel = null;                            // selezione in corso {id,a,b,moved}
 el('winsel').value=chartWin;
 el('smoothcurves').checked=smoothCurves;
-el('beep').checked=load('beep',false);
 el('notif').checked=load('notif',false);
-el('beep').addEventListener('change',()=>store('beep',el('beep').checked));
 
 // ── connessione ────────────────────────────────────────────────────────────
 let lastOkMs=0;
@@ -193,9 +225,11 @@ async function pollState(){
   try{
     state = await api('/api/state'); cfg = state.cfg; lastOkMs=Date.now(); setConn(true);
     renderHeader(); renderMeters(); renderChips(); renderOngoing();
-    document.title = (state.running ? (state.mode==='rec'?'● REC ':'◦ LIVE ') : '') +
+    evalRules(); renderMute();
+    document.title = (unseen?'🔔'+unseen+' ':'') +
+      (state.running ? (state.mode==='rec'?'● REC ':'◦ LIVE ') : '') +
       state.eventsCount + ' ev · Low-Freq Hunter';
-  }catch(e){ setConn(false); renderOngoing(); }
+  }catch(e){ setConn(false); renderOngoing(); evalSysFail(); }
 }
 async function pollSpectrum(){
   if(viewing!=='live') return;
@@ -217,28 +251,300 @@ function mergeSession(d, silent){
   const known = new Set(S.events.map(evKey));
   for(const e of (d.events||[])) if(!known.has(evKey(e))){ S.events.push(e); if(!silent) onNewEvent(e); }
   const gk = new Set(S.gaps.map(g=>g.startT));
-  for(const g of (d.gaps||[])) if(!gk.has(g.startT)) S.gaps.push(g);
+  for(const g of (d.gaps||[])) if(!gk.has(g.startT)){ S.gaps.push(g);
+    if(!silent && sys.gap) notify('buco di monitoraggio',
+      `${fmtT(g.startT)} → ${fmtT(g.endT)} · ${fmtDur(g.endT-g.startT)} senza dati`,{snd:'low'}); }
   const mk = new Set(S.markers);
   for(const m of (d.markers||[])) if(!mk.has(m)) S.markers.push(m);
   const sk = new Set(S.slices.map(s=>s.t));
   for(const s of (d.slices||[])) if(!sk.has(s.t)) S.slices.push({t:s.t, bins:Uint8Array.from(atob(s.b64),c=>c.charCodeAt(0))});
 }
 
-// ── QoL: beep e notifiche desktop sui nuovi eventi ─────────────────────────
+// ── centro notifiche: regole, trigger di sistema, registro ─────────────────
+const RTYPES={
+  lvl_above:'sale sopra soglia', lvl_below:'scende sotto soglia',
+  ev_start:'banda sopra soglia (subito)', ev_end:'evento registrato (a fine evento)',
+  ev_pulse:'evento pulsante ∿', active_long:'attiva da più di…',
+  quiet_long:'silenzio da più di…', dom_range:'dominante in un range Hz'};
+const SNDS={none:'nessuno', beep:'beep', low:'grave', dbl:'doppio'};
+let rules=load('rules',null);
+if(rules==null){   // migrazione dal vecchio comportamento (checkbox globali)
+  rules=[{id:1,on:load('notif',false)||load('beep',false),type:'ev_end',band:'any',
+          coolMin:0,desktop:load('notif',false),snd:load('beep',false)?'beep':'none',qhFrom:'',qhTo:''}];
+  store('rules',rules);
+}
+let sys=load('sys',{conn:true,connS:60,run:true,batt:false,battPct:25,gap:true});
+let muteUntil=load('muteUntil',0);
+let nlog=load('nlog',[]);
+let unseen=0, prevActive={};
+const RT_={};
+const RT=r=>RT_[r.id]||(RT_[r.id]={since:null,lastFire:0,armed:true,keys:new Set(),wasActive:false,quietAt:null});
+const bandName=id=>id==='any'?'qualsiasi banda':(id==='ref'?'ref (rumore di fondo)':bandLabel(id));
+
+function playSnd(kind){
+  if(!kind||kind==='none') return;
+  try{
+    const ac=new (window.AudioContext||window.webkitAudioContext)();
+    const tone=(f,t0,dur)=>{ const o=ac.createOscillator(),g=ac.createGain();
+      o.frequency.value=f; g.gain.value=0.09; o.connect(g); g.connect(ac.destination);
+      o.start(ac.currentTime+t0); o.stop(ac.currentTime+t0+dur); };
+    if(kind==='low') tone(330,0,0.35);
+    else if(kind==='dbl'){ tone(880,0,0.12); tone(880,0.2,0.12); }
+    else tone(880,0,0.18);
+  }catch(_){}
+}
+function notify(title,body,o){
+  nlog.unshift({t:Date.now(),title,body}); if(nlog.length>80) nlog.length=80;
+  store('nlog',nlog); renderNlog();
+  if(document.hidden){ unseen++; }
+  if(Date.now()<muteUntil) return;                       // muto: registra ma non disturbare
+  if((o?.desktop??true) && el('notif').checked && Notification.permission==='granted')
+    new Notification('LFH · '+title,{body});
+  playSnd(o?.snd);
+}
+function inQuietHours(r){
+  if(!r.qhFrom||!r.qhTo) return false;
+  const hm=s=>{const [h,m]=s.split(':').map(Number); return h*60+m;};
+  const cur=new Date().getHours()*60+new Date().getMinutes(), a=hm(r.qhFrom), b=hm(r.qhTo);
+  return a<=b ? cur>=a&&cur<b : cur>=a||cur<b;
+}
+function canFire(r){ return r.on && !inQuietHours(r) && Date.now()-RT(r).lastFire>=(r.coolMin||0)*60000; }
+function fireRule(r,title,body){ RT(r).lastFire=Date.now(); notify(title,body,r); }
+
+function lvlOf(band){
+  if(!state) return null;
+  if(band==='ref') return state.ref;
+  if(band==='V') return state.vibDb;
+  if(band==='any'){ const v=Object.values(state.levels||{}); return v.length?Math.max(...v):null; }
+  return state.levels?.[band];
+}
+function evalRules(){
+  if(!state) return;
+  const nowMs=Date.now(), nowS=state.now/1000;
+  for(const r of rules){
+    if(!r.on) continue;
+    const rt=RT(r);
+    if(r.type==='lvl_above'||r.type==='lvl_below'){
+      if(!state.running){ rt.since=null; continue; }
+      const v=lvlOf(r.band), up=r.type==='lvl_above';
+      const hit=v!=null&&(up?v>=r.thr:v<=r.thr);
+      if(hit){
+        if(rt.since==null) rt.since=nowMs;
+        if(rt.armed && nowMs-rt.since>=(r.sustainS||0)*1000 && canFire(r)){
+          rt.armed=false;
+          fireRule(r,`${bandName(r.band)} ${up?'sopra':'sotto'} ${r.thr} dBFS`,
+            `livello ${v.toFixed(1)} dBFS`+((r.sustainS||0)>0?` da ${r.sustainS} s`:''));
+        }
+      }else{
+        rt.since=null;
+        if(v==null||(up?v<r.thr-2:v>r.thr+2)) rt.armed=true;   // riarmo con isteresi 2 dB
+      }
+    }
+    else if(r.type==='active_long'){
+      for(const [id,since] of Object.entries(state.activeBands||{})){
+        if(r.band!=='any'&&r.band!==id) continue;
+        const key=id+'_'+since;
+        if(nowS-since>=(r.holdMin||10)*60 && !rt.keys.has(key) && canFire(r)){
+          rt.keys.add(key);
+          fireRule(r,`${bandLabel(id)} attiva da ${fmtDur(nowS-since)}`,
+            `sopra soglia ininterrottamente dalle ${fmtT(since)}`);
+        }
+      }
+      if(rt.keys.size>40) rt.keys=new Set([...rt.keys].slice(-10));
+    }
+    else if(r.type==='quiet_long'){
+      if(Object.keys(state.activeBands||{}).length){ rt.wasActive=true; rt.quietAt=null; }
+      else if(state.running){
+        if(rt.quietAt==null) rt.quietAt=nowMs;
+        if(rt.wasActive && nowMs-rt.quietAt>=(r.holdMin||10)*60000 && canFire(r)){
+          rt.wasActive=false;
+          fireRule(r,`silenzio da ${r.holdMin} min`,`nessuna banda sopra soglia dalle ${fmtT(rt.quietAt/1000)}`);
+        }
+      }
+    }
+    else if(r.type==='dom_range'){
+      if(!state.running){ rt.since=null; continue; }
+      const hz=state.domHz, hit=hz!=null&&hz>=r.hzLo&&hz<=r.hzHi;
+      if(hit){
+        if(rt.since==null) rt.since=nowMs;
+        if(rt.armed && nowMs-rt.since>=(r.sustainS||0)*1000 && canFire(r)){
+          rt.armed=false;
+          fireRule(r,`dominante ${hz.toFixed(1)} Hz`,
+            `nel range ${r.hzLo}–${r.hzHi} Hz`+((r.sustainS||0)>0?` da ${r.sustainS} s`:''));
+        }
+      }else{ rt.since=null; rt.armed=true; }
+    }
+  }
+  // inizio attività banda (in tempo reale, prima della conferma evento)
+  const act=state.activeBands||{};
+  for(const id of Object.keys(act)) if(!(id in prevActive))
+    for(const r of rules)
+      if(r.type==='ev_start'&&(r.band==='any'||r.band===id)&&canFire(r))
+        fireRule(r,`${bandLabel(id)} sopra soglia`,`inizio alle ${fmtT(act[id])}`);
+  prevActive=act;
+  evalSysOk();
+}
 function onNewEvent(e){
-  if(el('beep').checked){ try{
-    const ac = new (window.AudioContext||window.webkitAudioContext)();
-    const o=ac.createOscillator(), g=ac.createGain();
-    o.frequency.value=880; g.gain.value=0.08; o.connect(g); g.connect(ac.destination);
-    o.start(); o.stop(ac.currentTime+0.18);
-  }catch(_){}}
-  if(el('notif').checked && Notification.permission==='granted'){
-    new Notification('Low-Freq Hunter — evento '+(e.kind==='pulse'?'pulsante ':'')+bandLabel(e.band),
-      {body:`${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`});
+  for(const r of rules){
+    const match=r.band==='any'||r.band===e.band;
+    if(!match) continue;
+    if(r.type==='ev_end'&&canFire(r))
+      fireRule(r,'evento '+(e.kind==='pulse'?'pulsante ∿ ':'')+bandLabel(e.band),
+        `${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`);
+    if(r.type==='ev_pulse'&&e.kind==='pulse'&&canFire(r))
+      fireRule(r,'evento pulsante ∿ '+bandLabel(e.band),
+        `${fmtT(e.startT)} → ${fmtT(e.endT)} · ${fmtDur(e.durationS)} · picco ${e.peakDb??'—'} dBFS`);
+  }
+}
+// trigger di sistema
+const sysRT={connLostAt:null,connFired:false,prevRun:null,battFired:false};
+function evalSysOk(){   // chiamato a ogni /api/state riuscito
+  if(sysRT.connFired) notify('connessione ripristinata',
+    'telefono di nuovo raggiungibile dopo '+fmtDur((Date.now()-sysRT.connLostAt)/1000));
+  sysRT.connLostAt=null; sysRT.connFired=false;
+  if(sys.run && sysRT.prevRun!=null && sysRT.prevRun!==state.running)
+    notify(state.running?'monitoraggio ripartito':'monitoraggio FERMO',
+      state.running?'la cattura è di nuovo attiva':'il telefono ha smesso di monitorare');
+  sysRT.prevRun=state.running;
+  if(sys.batt && state.batteryPct!=null){
+    if(state.batteryPct<=sys.battPct && !sysRT.battFired){
+      sysRT.battFired=true;
+      notify('batteria telefono '+state.batteryPct+'%','sotto il limite del '+sys.battPct+'%',{snd:'low'});
+    }
+    if(state.batteryPct>sys.battPct+5) sysRT.battFired=false;
+  }
+}
+function evalSysFail(){   // chiamato a ogni /api/state fallito
+  if(!sys.conn) return;
+  if(sysRT.connLostAt==null) sysRT.connLostAt=Date.now();
+  else if(!sysRT.connFired && Date.now()-sysRT.connLostAt>=sys.connS*1000){
+    sysRT.connFired=true;
+    notify('telefono non raggiungibile',
+      'nessun dato da '+fmtDur((Date.now()-sysRT.connLostAt)/1000)+' — controlla wifi o app',{snd:'low'});
   }
 }
 el('notif').addEventListener('change',()=>{ store('notif',el('notif').checked);
   if(el('notif').checked) Notification.requestPermission(); });
+el('mutesel').addEventListener('change',()=>{
+  const m=+el('mutesel').value;
+  muteUntil=m?Date.now()+m*60000:0; store('muteUntil',muteUntil); renderMute();
+});
+el('testnotif').addEventListener('click',()=>notify('prova','così appare una notifica',{snd:'beep'}));
+function renderMute(){
+  const on=Date.now()<muteUntil;
+  el('mutebadge').textContent=on?'· muto fino alle '+fmtT(muteUntil/1000).slice(0,5):'';
+  if(!on&&el('mutesel').value!=='0') el('mutesel').value='0';
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ unseen=0; } });
+
+// ── UI del centro notifiche ────────────────────────────────────────────────
+function ruleBands(){ const c=channels(); return ['any',...c,'ref']; }
+function ruleDesc(r){
+  const b=`<span style="color:${r.band==='any'?'var(--text)':(r.band==='ref'?'var(--dim)':bandColor(r.band))}">${bandName(r.band)}</span>`;
+  let main;
+  switch(r.type){
+    case 'lvl_above': main=`${b} sale sopra <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
+    case 'lvl_below': main=`${b} scende sotto <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
+    case 'ev_start': main=`${b} sopra soglia (avviso subito)`; break;
+    case 'ev_end': main=`evento registrato · ${b}`; break;
+    case 'ev_pulse': main=`evento pulsante ∿ · ${b}`; break;
+    case 'active_long': main=`${b} attiva da più di <b>${r.holdMin}</b> min`; break;
+    case 'quiet_long': main=`silenzio da più di <b>${r.holdMin}</b> min`; break;
+    case 'dom_range': main=`dominante tra <b>${r.hzLo}–${r.hzHi}</b> Hz`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
+    default: main=r.type;
+  }
+  const extra=[];
+  if(r.coolMin>0) extra.push(`pausa ${r.coolMin} min`);
+  if(r.qhFrom&&r.qhTo) extra.push(`zitta ${r.qhFrom}–${r.qhTo}`);
+  if(r.snd&&r.snd!=='none') extra.push('♪ '+SNDS[r.snd]);
+  if(!(r.desktop??true)) extra.push('no desktop');
+  return main+(extra.length?`<div class="sub">${extra.join(' · ')}</div>`:'');
+}
+function renderRules(){
+  el('rulelist').innerHTML=rules.map(r=>
+    `<div class="rulerow">
+      <span class="chip ${r.on?'':'off'}" data-tgl="${r.id}" style="color:${r.on?'var(--accent)':'var(--dim)'}">${r.on?'ON':'OFF'}</span>
+      <span class="desc">${ruleDesc(r)}</span>
+      <a data-edit="${r.id}" title="modifica">✎</a><a data-del="${r.id}" title="elimina">✕</a>
+    </div>`).join('')||'<div style="color:var(--faint);font-size:11px;padding:4px 0">nessuna regola — aggiungine una</div>';
+}
+el('rulelist').addEventListener('click',e=>{
+  const d=e.target.dataset;
+  if(d.tgl){ const r=rules.find(x=>x.id==d.tgl); r.on=!r.on; store('rules',rules); renderRules(); }
+  else if(d.del){ rules=rules.filter(x=>x.id!=d.del); store('rules',rules); renderRules(); }
+  else if(d.edit) openEditor(rules.find(x=>x.id==d.edit));
+});
+el('addrule').addEventListener('click',()=>openEditor(null));
+function openEditor(r){
+  const v=r||{type:'lvl_above',band:'any',thr:-55,sustainS:5,holdMin:15,hzLo:60,hzHi:64,
+              coolMin:5,desktop:true,snd:'beep',qhFrom:'',qhTo:''};
+  const bandSel=ruleBands().map(id=>
+    `<option value="${id}" ${v.band===id?'selected':''}>${id==='any'?'qualsiasi banda':(id==='ref'?'ref':bandLabel(id))}</option>`).join('');
+  el('ruleedit').innerHTML=`<div class="frm">
+    <div class="row">quando <select id="re_type">${Object.entries(RTYPES).map(([k,l])=>
+      `<option value="${k}" ${v.type===k?'selected':''}>${l}</option>`).join('')}</select>
+      <span id="re_bandwrap">banda <select id="re_band">${bandSel}</select></span></div>
+    <div class="row" id="re_params"></div>
+    <div class="row">pausa tra notifiche <input type="number" id="re_cool" value="${v.coolMin??5}" min="0"> min
+      · zitta dalle <input type="time" id="re_qhf" value="${v.qhFrom||''}"> alle <input type="time" id="re_qht" value="${v.qhTo||''}"></div>
+    <div class="row">suono <select id="re_snd">${Object.entries(SNDS).map(([k,l])=>
+      `<option value="${k}" ${(v.snd||'none')===k?'selected':''}>${l}</option>`).join('')}</select>
+      <label class="chk"><input type="checkbox" id="re_desk" ${(v.desktop??true)?'checked':''}> notifica desktop</label></div>
+    <div class="row"><button id="re_save" style="color:var(--accent);border-color:var(--accent)">salva</button>
+      <button id="re_cancel">annulla</button></div>
+  </div>`;
+  const params=()=>{
+    const t=el('re_type').value;
+    el('re_bandwrap').style.display = t==='quiet_long'||t==='dom_range' ? 'none':'';
+    el('re_params').innerHTML =
+      t==='lvl_above'||t==='lvl_below'
+        ? `soglia <input type="number" id="re_thr" value="${v.thr??-55}" step="0.5"> dBFS
+           · per almeno <input type="number" id="re_sus" value="${v.sustainS??5}" min="0"> s`
+      : t==='active_long'||t==='quiet_long'
+        ? `più di <input type="number" id="re_hold" value="${v.holdMin??15}" min="1"> min`
+      : t==='dom_range'
+        ? `da <input type="number" id="re_hzlo" value="${v.hzLo??60}" step="0.5"> a
+           <input type="number" id="re_hzhi" value="${v.hzHi??64}" step="0.5"> Hz
+           · per almeno <input type="number" id="re_sus" value="${v.sustainS??5}" min="0"> s`
+      : '';
+  };
+  params();
+  el('re_type').addEventListener('change',params);
+  el('re_cancel').addEventListener('click',()=>el('ruleedit').innerHTML='');
+  el('re_save').addEventListener('click',()=>{
+    const t=el('re_type').value;
+    const n={id:r?r.id:Date.now(), on:r?r.on:true, type:t, band:el('re_band').value,
+      coolMin:Math.max(0,+el('re_cool').value||0), qhFrom:el('re_qhf').value, qhTo:el('re_qht').value,
+      snd:el('re_snd').value, desktop:el('re_desk').checked};
+    if(t==='lvl_above'||t==='lvl_below'){ n.thr=+el('re_thr').value; n.sustainS=Math.max(0,+el('re_sus').value||0); }
+    if(t==='active_long'||t==='quiet_long'){ n.holdMin=Math.max(1,+el('re_hold').value||15); }
+    if(t==='quiet_long') n.band='any';
+    if(t==='dom_range'){ n.band='any'; n.hzLo=+el('re_hzlo').value; n.hzHi=+el('re_hzhi').value;
+      n.sustainS=Math.max(0,+el('re_sus').value||0); }
+    if(r){ rules[rules.indexOf(r)]=n; delete RT_[n.id]; } else rules.push(n);
+    store('rules',rules); el('ruleedit').innerHTML=''; renderRules();
+  });
+}
+function renderSys(){
+  el('sysrules').innerHTML=`
+    <label class="chk"><input type="checkbox" id="sy_conn" ${sys.conn?'checked':''}> telefono non raggiungibile oltre
+      <input type="number" id="sy_conns" value="${sys.connS}" min="10"> s (e al ripristino)</label>
+    <label class="chk"><input type="checkbox" id="sy_run" ${sys.run?'checked':''}> monitoraggio si ferma o riparte</label>
+    <label class="chk"><input type="checkbox" id="sy_batt" ${sys.batt?'checked':''}> batteria telefono sotto
+      <input type="number" id="sy_battp" value="${sys.battPct}" min="5" max="90"> %</label>
+    <label class="chk"><input type="checkbox" id="sy_gap" ${sys.gap?'checked':''}> buco di monitoraggio (gap)</label>`;
+  const upd=()=>{ sys={conn:el('sy_conn').checked, connS:Math.max(10,+el('sy_conns').value||60),
+    run:el('sy_run').checked, batt:el('sy_batt').checked,
+    battPct:Math.max(5,+el('sy_battp').value||25), gap:el('sy_gap').checked}; store('sys',sys); };
+  el('sysrules').querySelectorAll('input').forEach(i=>i.addEventListener('change',upd));
+}
+function renderNlog(){
+  el('nlogcount').textContent=nlog.length?'· '+nlog.length:'';
+  el('nlog').innerHTML=nlog.slice(0,50).map(n=>
+    `<div class="nlogrow"><span class="nt">${fmtT(n.t/1000)}</span> <b>${n.title}</b> — ${n.body}</div>`).join('')
+    ||'<div style="color:var(--faint)">nessuna notifica registrata</div>';
+}
+el('clearlog').addEventListener('click',e=>{ e.preventDefault(); nlog=[]; store('nlog',nlog); renderNlog(); });
 
 // ── header + meters ────────────────────────────────────────────────────────
 const bandLabel = id => { if(id==='V') return 'Vibraz.';
@@ -342,6 +648,7 @@ function renderChips(){
   ).join('') + `<span class="chip ${hidden.has('ref')?'off':''}" data-ch="ref" style="color:var(--dim)">ref</span>`;
   el('evchips').innerHTML = `<span class="chip ${evBand==='all'?'sel':'dim'}" data-ev="all">tutte</span>` +
     chs.map(id=>`<span class="chip ${evBand===id?'sel':'dim'}" data-ev="${id}" style="color:${bandColor(id)};border-color:${bandColor(id)}">${bandLabel(id)}</span>`).join('');
+  renderRules();   // le descrizioni usano le etichette banda appena arrivate
 }
 el('chchips').addEventListener('click',e=>{
   const ch=e.target.dataset?.ch; if(!ch) return;
@@ -672,6 +979,7 @@ function redrawAll(){
   drawWaterfall(); drawChart(); renderStats(); renderEvents();
 }
 window.addEventListener('resize',redrawAll);
+renderSys(); renderRules(); renderNlog(); renderMute();
 setInterval(pollState,1000);
 setInterval(pollSpectrum,1000);
 setInterval(pollSession,4000);
