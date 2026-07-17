@@ -7,10 +7,12 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import androidx.compose.ui.graphics.toArgb
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
 import io.github.adrianss31.lowfreqhunter.engine.Palette
+import io.github.adrianss31.lowfreqhunter.engine.Recurrence
 
 /**
  * Rende timeline e spettrogramma di una sessione come Bitmap statici.
@@ -92,8 +94,14 @@ object BitmapRender {
             val y = i * laneH + 2 * d
             fill.color = 0x0AFFFFFF
             c.drawRect(0f, y, w, y + laneH - 4 * d, fill)
-            fill.color = chColor(ch)
+            // barre colorate per intensità (picco sopra soglia), non on/off
+            val thr = if (ch == Channels.VIB) b.cfg.vib.thr else b.cfg.band(ch)?.thr
             for (ev in b.events.filter { it.band == ch }) {
+                fill.color = if (thr != null) {
+                    Render.wfColor(0.30f + 0.70f * Recurrence.heatOf((ev.peakDb ?: thr) - thr)).toArgb()
+                } else {
+                    chColor(ch)
+                }
                 c.drawRect(xOf(ev.startT), y, maxOf(xOf(ev.endT), xOf(ev.startT) + 3f), y + laneH - 4 * d, fill)
             }
             laneLabel.color = chColor(ch)

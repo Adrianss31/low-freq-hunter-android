@@ -28,8 +28,29 @@ data class ScheduleCfg(
 @Serializable
 data class ContinuousCfg(
     val enabled: Boolean = false,
-    val splitMin: Int = 0,         // minuti dalla mezzanotte (00:00)
-)
+    val splitMin: Int = 0,         // primo spezzamento (inizio sessione "Notte")
+    val split2Enabled: Boolean = false,
+    val split2Min: Int = 7 * 60,   // secondo spezzamento (inizio sessione "Giorno")
+) {
+    /** Orari di spezzamento attivi (minuti dalla mezzanotte). */
+    fun splitMins(): List<Int> =
+        if (split2Enabled) listOf(splitMin, split2Min) else listOf(splitMin)
+
+    /**
+     * Etichetta della sessione che copre il minuto [minOfDay]: con due
+     * spezzamenti la fascia da splitMin a split2Min è la "Notte" (es. 21→7),
+     * l'altra il "Giorno". Con uno solo resta tutto "Notte".
+     */
+    fun labelPrefixAt(minOfDay: Int): String {
+        if (!split2Enabled || splitMin == split2Min) return "Notte"
+        val inNight = if (splitMin <= split2Min) {
+            minOfDay >= splitMin && minOfDay < split2Min
+        } else {
+            minOfDay >= splitMin || minOfDay < split2Min
+        }
+        return if (inNight) "Notte" else "Giorno"
+    }
+}
 
 /** Server LAN: dashboard consultabile dal PC mentre il telefono registra. */
 @Serializable

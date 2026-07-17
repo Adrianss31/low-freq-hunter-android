@@ -174,6 +174,36 @@
     </div>
   </div>
 </div>
+
+<div class="panel">
+  <div class="caps">Ricorrenza · righe = sessioni · colore = intensità del picco sopra soglia</div>
+  <canvas id="rec" height="40" style="margin-top:8px;cursor:crosshair"></canvas>
+  <div class="row" style="margin-top:6px">
+    <span class="caps">soglia</span>
+    <canvas id="reclegend" width="220" height="8" style="width:220px"></canvas>
+    <span class="caps">+15 dB</span>
+    <span style="flex:1"></span>
+    <span class="caps" id="recinfo"></span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row" style="justify-content:space-between">
+    <div class="caps">Impostazioni dell'app</div>
+    <button id="settoggle">mostra</button>
+  </div>
+  <div id="setbody" style="display:none;margin-top:10px">
+    <div class="caps" style="color:var(--amber);margin-bottom:8px">
+      le modifiche a bande, soglie e analisi valgono dalla prossima sessione
+    </div>
+    <div id="setform"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="big" id="setsave" style="flex:1">💾 SALVA SUL TELEFONO</button>
+      <button id="setreload">ricarica</button>
+    </div>
+    <div class="caps" id="setmsg" style="margin-top:6px"></div>
+  </div>
+</div>
 <div id="tip"></div>
 
 <script>
@@ -973,10 +1003,174 @@ el('chart').addEventListener('mousemove',e=>{
 });
 el('chart').addEventListener('mouseleave',()=>tip());
 
+// ── ricorrenza: heatmap sessioni × ora del giorno, colore = intensità ──────
+const R_BUCKETS=48, R_BUCKET_S=86400/R_BUCKETS, R_ROWH=18, R_GUT=64;
+let recNights=[];
+function recAdd(acc,aS,bS,w){ w=w==null?1:w; let t=aS; const end=Math.min(bS,aS+86400);
+  while(t<end){ const off=-new Date(t*1000).getTimezoneOffset()*60;
+    const sod=(((t+off)%86400)+86400)%86400;
+    const bkt=Math.min(R_BUCKETS-1,Math.floor(sod/R_BUCKET_S));
+    const next=t+(R_BUCKET_S-sod%R_BUCKET_S);
+    const chunk=Math.min(next,end)-t;
+    acc[bkt]+=chunk*w; t+=chunk; } }
+async function loadRecurrence(){
+  try{
+    const list=await api('/api/recurrence');
+    recNights=list.filter(s=>s.endedAt>s.startedAt).map(s=>{
+      const cover=new Float32Array(R_BUCKETS), active=new Float32Array(R_BUCKETS), heat=new Float32Array(R_BUCKETS);
+      recAdd(cover,s.startedAt/1000,s.endedAt/1000);
+      for(const e of (s.events||[])){
+        if(e.band==='gap'){ const g=new Float32Array(R_BUCKETS); recAdd(g,e.startT,e.endT);
+          for(let i=0;i<R_BUCKETS;i++) cover[i]=Math.max(0,cover[i]-g[i]); continue; }
+        recAdd(active,e.startT,e.endT);
+        const thr=s.thr?.[e.band];
+        const h=(thr!=null&&e.peakDb!=null)?Math.max(0.06,Math.min(1,(e.peakDb-thr)/15)):0.2;
+        recAdd(heat,e.startT,e.endT,h);
+      }
+      return {label:new Date(s.startedAt).toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit'}),
+              name:s.label, cover, active, heat, startedAt:s.startedAt};
+    });
+    el('recinfo').textContent=recNights.length?recNights.length+' sessioni':'nessuna sessione';
+    drawRecurrence();
+  }catch(e){}
+}
+function drawRecurrence(){
+  const c=el('rec'); c.dataset.h=Math.max(recNights.length,1)*R_ROWH+16;
+  const [g,w,h]=fitCanvas(c);
+  g.fillStyle='#0a0a0c'; g.fillRect(0,0,w,h);
+  g.font='10px monospace';
+  const plotW=w-R_GUT;
+  recNights.forEach((n,r)=>{
+    const y=r*R_ROWH;
+    g.fillStyle='#8a8a96'; g.fillText(n.label,2,y+R_ROWH-6);
+    for(let b=0;b<R_BUCKETS;b++){
+      const x=R_GUT+b*plotW/R_BUCKETS, cw=plotW/R_BUCKETS+0.5;
+      if(n.cover[b]<R_BUCKET_S*0.05){ g.fillStyle='#0a0a0c'; }
+      else if(n.active[b]<=0){ g.fillStyle='#1c1c22'; }
+      else{
+        const frac=Math.min(1,n.active[b]/n.cover[b]);
+        const heat=Math.min(1,n.heat[b]/n.active[b]);
+        g.fillStyle=wfColor((0.30+0.70*heat)*(0.45+0.55*frac));
+      }
+      g.fillRect(x,y+1,cw,R_ROWH-3);
+    }
+  });
+  g.fillStyle='#666';
+  for(const hh of [0,6,12,18]){ const x=R_GUT+plotW*hh/24;
+    g.strokeStyle='#2a2a3080'; g.beginPath(); g.moveTo(x,0); g.lineTo(x,h-14); g.stroke();
+    g.fillText(hh,x+3,h-3); }
+}
+el('rec').addEventListener('mousemove',e=>{
+  const r=el('rec').getBoundingClientRect();
+  const ri=Math.floor((e.clientY-r.top)/R_ROWH);
+  if(ri<0||ri>=recNights.length){tip();return;}
+  const n=recNights[ri];
+  const fx=(e.clientX-r.left-R_GUT)/(r.width-R_GUT); if(fx<0||fx>1){tip();return;}
+  const b=Math.min(R_BUCKETS-1,Math.floor(fx*R_BUCKETS));
+  const hh=String(Math.floor(b*R_BUCKET_S/3600)).padStart(2,'0');
+  const mm=String(Math.floor(b*R_BUCKET_S%3600/60)).padStart(2,'0');
+  const overDb=n.active[b]>0?(n.heat[b]/n.active[b]*15):0;
+  tip(e.clientX,e.clientY,`${n.name}\n${hh}:${mm} · attivo ${fmtDur(n.active[b])}`+
+    (n.active[b]>0?`\npicco medio +${overDb.toFixed(1)} dB sopra soglia`:''));
+});
+el('rec').addEventListener('mouseleave',()=>tip());
+(function(){ const g=el('reclegend').getContext('2d');
+  for(let i=0;i<220;i++){ g.fillStyle=wfColor(0.30+0.70*i/219); g.fillRect(i,0,1,8); } })();
+
+// ── impostazioni dell'app ──────────────────────────────────────────────────
+let SET=null;
+const hmOf=m=>String(m/60|0).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const toMin=v=>{ const [h,m]=v.split(':').map(Number); return ((h||0)*60+(m||0))%1440; };
+function sIn(id,val,w,step){ return `<input id="${id}" value="${val}" style="width:${w||70}px;background:var(--surface2);color:var(--text);border:1px solid var(--border);font-family:inherit;font-size:12px;padding:6px" ${step?`type="number" step="${step}"`:''}>`; }
+function sTime(id,min){ return `<input id="${id}" type="time" value="${hmOf(min)}" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);font-family:inherit;font-size:12px;padding:5px">`; }
+function sChk(id,on,label){ return `<label class="chk"><input type="checkbox" id="${id}" ${on?'checked':''}> ${label}</label>`; }
+function renderSettings(){
+  if(!SET) return;
+  const e=SET.engine, sc=SET.schedule, co=SET.continuous, ca=SET.calib;
+  const bandRows=e.bands.map((b,i)=>`<tr>
+    <td><input type="checkbox" data-bi="${i}" class="bEn" ${b.enabled?'checked':''}></td>
+    <td style="color:${bandColor(b.id)}">${b.id}</td>
+    <td>${sIn('bC'+i,b.center,60,1)}</td>
+    <td>${sIn('bW'+i,b.width,50,1)}</td>
+    <td>${sIn('bT'+i,b.thr,60,1)}</td>
+    <td>${e.bands.length>1?`<button data-del="${i}">✕</button>`:''}</td></tr>`).join('');
+  el('setform').innerHTML=`
+    <div class="caps" style="margin-bottom:4px">Bande di frequenza</div>
+    <table style="max-width:520px"><thead><tr><th>on</th><th>id</th><th>centro hz</th><th>±hz</th><th>soglia dbfs</th><th></th></tr></thead>
+    <tbody>${bandRows}</tbody></table>
+    <div style="margin-top:6px"><button id="bAdd">＋ aggiungi banda</button></div>
+    <div class="row" style="margin-top:12px">
+      ${sChk('vibEn',e.vib.enabled,'canale V (vibrazioni)')}
+      <span class="caps">soglia</span>${sIn('vibThr',e.vib.thr,60,1)}<span class="caps">db(g)</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="caps">evento on dopo</span>${sIn('minOn',e.minOnS,50,1)}<span class="caps">s · off dopo</span>${sIn('minOff',e.minOffS,50,1)}<span class="caps">s · isteresi</span>${sIn('hyst',e.hystDb,50,1)}<span class="caps">db</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="caps">fft</span>
+      <select id="fft"><option value="16384" ${e.fftSize===16384?'selected':''}>media (16384)</option>
+      <option value="32768" ${e.fftSize===32768?'selected':''}>alta (32768)</option></select>
+      <span class="caps">spettro live max</span>${sIn('xmax',SET.specXMax,60,50)}<span class="caps">hz</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      ${sChk('clips',e.clipsEnabled,'clip wav sugli eventi')}
+      <span class="caps">durata</span>${sIn('clipS',e.clipSeconds,50,1)}<span class="caps">s · max</span>${sIn('clipM',e.clipsMax,50,1)}<span class="caps">/notte</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      ${sChk('calEn',ca.enabled,'stima dB SPL')}
+      <span class="caps">offset</span>${sIn('calOff',ca.offsetDb,60,0.5)}<span class="caps">db</span>
+    </div>
+    <div class="caps" style="margin:14px 0 4px">Programmazione oraria</div>
+    <div class="row">${sChk('schEn',sc.enabled,'attiva')}
+      ${sTime('schA',sc.startMin)}<span class="caps">→</span>${sTime('schB',sc.endMin)}</div>
+    <div class="caps" style="margin:14px 0 4px">Registrazione continua</div>
+    <div class="row">${sChk('coEn',co.enabled,'attiva')}
+      <span class="caps">spezza alle</span>${sTime('coA',co.splitMin)}
+      ${sChk('co2En',co.split2Enabled,'secondo spezzamento')}${sTime('coB',co.split2Min)}</div>
+    <div class="caps" style="margin-top:4px;color:var(--faint)">con due spezzamenti le sessioni diventano Notte (dal 1°) e Giorno (dal 2°)</div>`;
+  el('bAdd').onclick=()=>{ const used=new Set(e.bands.map(b=>b.id));
+    const id=[...'ABCDEFGHIJKLMNOPQRSTU'].find(c=>!used.has(c)&&c!=='V'); if(!id) return;
+    collectSettings(); SET.engine.bands.push({id,enabled:true,center:150,width:10,thr:-55}); renderSettings(); };
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    collectSettings(); SET.engine.bands.splice(+b.dataset.del,1); renderSettings(); });
+}
+function collectSettings(){
+  if(!SET||!el('bAdd')) return;
+  const e=SET.engine, sc=SET.schedule, co=SET.continuous, ca=SET.calib, v=id=>parseFloat(el(id).value)||0;
+  e.bands.forEach((b,i)=>{ b.enabled=document.querySelector(`.bEn[data-bi="${i}"]`).checked;
+    b.center=v('bC'+i); b.width=v('bW'+i); b.thr=v('bT'+i); });
+  e.vib.enabled=el('vibEn').checked; e.vib.thr=v('vibThr');
+  e.minOnS=Math.max(1,v('minOn')|0); e.minOffS=Math.max(1,v('minOff')|0); e.hystDb=v('hyst');
+  e.fftSize=+el('fft').value; SET.specXMax=Math.max(100,v('xmax')|0);
+  e.clipsEnabled=el('clips').checked; e.clipSeconds=Math.max(5,v('clipS')|0); e.clipsMax=Math.max(1,v('clipM')|0);
+  ca.enabled=el('calEn').checked; ca.offsetDb=v('calOff');
+  sc.enabled=el('schEn').checked; sc.startMin=toMin(el('schA').value); sc.endMin=toMin(el('schB').value);
+  co.enabled=el('coEn').checked; co.splitMin=toMin(el('coA').value);
+  co.split2Enabled=el('co2En').checked; co.split2Min=toMin(el('coB').value);
+}
+async function loadSettings(){
+  try{ SET=await api('/api/settings'); renderSettings(); el('setmsg').textContent=''; }
+  catch(e){ el('setmsg').textContent='impostazioni non caricate'; }
+}
+el('settoggle').addEventListener('click',()=>{
+  const b=el('setbody'), show=b.style.display==='none';
+  b.style.display=show?'block':'none'; el('settoggle').textContent=show?'nascondi':'mostra';
+  if(show&&!SET) loadSettings();
+});
+el('setreload').addEventListener('click',loadSettings);
+el('setsave').addEventListener('click',async()=>{
+  if(!SET) return;
+  collectSettings();
+  try{
+    const r=await fetch('/api/settings?k='+K,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SET)});
+    el('setmsg').textContent=r.ok?'✓ salvate sul telefono':'errore: '+await r.text();
+  }catch(e){ el('setmsg').textContent='telefono non raggiungibile'; }
+});
+
 // ── redraw + loop ──────────────────────────────────────────────────────────
 function redrawAll(){
   el('zoominfo').textContent = zoomWin ? `⧉ zoom ${fmtT(zoomWin.t0)}–${fmtT(zoomWin.t1)} · doppio click = esci` : '';
-  drawWaterfall(); drawChart(); renderStats(); renderEvents();
+  drawWaterfall(); drawChart(); renderStats(); renderEvents(); drawRecurrence();
 }
 window.addEventListener('resize',redrawAll);
 renderSys(); renderRules(); renderNlog(); renderMute();
@@ -984,7 +1178,8 @@ setInterval(pollState,1000);
 setInterval(pollSpectrum,1000);
 setInterval(pollSession,4000);
 setInterval(loadSessions,30000);
-pollState(); pollSpectrum(); pollSession(); loadSessions();
+setInterval(loadRecurrence,60000);
+pollState(); pollSpectrum(); pollSession(); loadSessions(); loadRecurrence();
 </script>
 </body>
 </html>

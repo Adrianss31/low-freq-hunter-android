@@ -32,7 +32,8 @@ private const val MAX_NIGHTS = 14
 
 /**
  * Heatmap di ricorrenza: righe = sessioni recenti, colonne = ora del giorno,
- * colore = frazione del tempo monitorato sopra soglia. Rende visibile a colpo
+ * colore = intensità del picco sopra soglia (la frazione di tempo attivo
+ * modula la luminosità). Rende visibile a colpo
  * d'occhio il disturbo che torna ogni notte alla stessa ora. Filtrabile per
  * banda: sorgenti diverse (es. un 50 Hz quasi continuo e un 100 Hz a orari
  * precisi) hanno firme orarie diverse che sommate si coprirebbero a vicenda.
@@ -49,7 +50,15 @@ fun RecurrencePanel(sessions: List<SessionEntity>, dao: LfhDao, cfg: EngineCfg) 
                 .take(MAX_NIGHTS)
             if (recent.size < 2) return@withContext emptyList()
             val byId = dao.eventsForSessions(recent.map { it.id }).groupBy { it.sessionId }
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
             recent.map { s ->
+                // soglie della cfg snapshot di quella sessione: servono per
+                // l'intensità (quanto il picco le ha superate)
+                val snap = runCatching { json.decodeFromString<EngineCfg>(s.cfgJson) }.getOrNull()
+                val thr = buildMap {
+                    snap?.bands?.forEach { put(it.id, it.thr) }
+                    snap?.vib?.let { put(Channels.VIB, it.thr) }
+                }
                 Recurrence.night(
                     label = fmtDateShort(s.startedAt),
                     startS = s.startedAt / 1000,
@@ -57,6 +66,7 @@ fun RecurrencePanel(sessions: List<SessionEntity>, dao: LfhDao, cfg: EngineCfg) 
                     events = byId[s.id].orEmpty().map {
                         EventData(it.band, it.startT, it.endT, it.durationS, it.peakDb, it.avgDb)
                     },
+                    thr = thr,
                 )
             }
         }
@@ -88,15 +98,18 @@ fun RecurrencePanel(sessions: List<SessionEntity>, dao: LfhDao, cfg: EngineCfg) 
             nights.forEachIndexed { r, n ->
                 val y = r * rowH
                 val active = n.active(selBand)
+                val heat = n.heat(selBand)
                 with(Render) { label(n.label, 0f, y + rowH - 4f) }
                 for (bkt in 0 until Recurrence.BUCKETS) {
                     val cover = n.coverS[bkt]
+                    // colore = intensità (dB del picco sopra soglia), non on/off;
+                    // la % di tempo attivo modula la luminosità della cella
                     val color = when {
                         cover < Recurrence.BUCKET_S * 0.05f -> Lfh.Bg           // non monitorato
                         active[bkt] <= 0f -> Lfh.Surface2                        // monitorato, silenzio
                         else -> {
                             val frac = (active[bkt] / cover).coerceIn(0f, 1f)
-                            Render.wfColor(0.25f + 0.75f * frac)
+                            Render.wfColor((0.30f + 0.70f * heat[bkt]) * (0.45f + 0.55f * frac))
                         }
                     }
                     drawRect(color, Offset(gutter + bkt * colW, y), Size(colW + 0.5f, rowH - 2f))
@@ -140,7 +153,7 @@ fun RecurrencePanel(sessions: List<SessionEntity>, dao: LfhDao, cfg: EngineCfg) 
         }
         Spacer(Modifier.height(6.dp))
         CapsLabel(
-            "colore = % del tempo sopra soglia · scuro = monitorato in silenzio",
+            "colore = intensità del picco sopra soglia (max +15 dB) · scuro = poco o in silenzio",
             color = Lfh.TextFaint,
         )
     }

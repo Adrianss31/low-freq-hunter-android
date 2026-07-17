@@ -2,6 +2,7 @@ package io.github.adrianss31.lowfreqhunter.server
 
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.CalibCfg
 import io.github.adrianss31.lowfreqhunter.data.EventEntity
 import io.github.adrianss31.lowfreqhunter.data.Exporter
@@ -10,12 +11,15 @@ import io.github.adrianss31.lowfreqhunter.data.MarkerEntity
 import io.github.adrianss31.lowfreqhunter.data.SampleEntity
 import io.github.adrianss31.lowfreqhunter.data.SessionBundle
 import io.github.adrianss31.lowfreqhunter.data.SessionEntity
+import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.data.SliceEntity
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.EngineCfg
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorService
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonArray
@@ -43,6 +47,9 @@ import kotlin.math.roundToInt
  *   GET  /api/session/<id>.json   export JSON completo (come dall'app)
  *   GET  /api/session/<id>/eventi.csv | campioni.csv
  *   POST /api/marker              marker "lo sento adesso" dal PC
+ *   GET  /api/recurrence          eventi+soglie delle ultime sessioni (heatmap)
+ *   GET  /api/settings            impostazioni correnti dell'app
+ *   POST /api/settings            salva le impostazioni (sezione LAN esclusa)
  */
 class LanServer(
     private val ctx: Context,
@@ -66,6 +73,7 @@ class LanServer(
     }
 
     private val b64 = Base64.getEncoder()
+    private val jsonCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -80,6 +88,9 @@ class LanServer(
                 uri == "/api/session" && session.method == Method.GET ->
                     json(apiLiveSession((session.parms["since"] ?: "0").toLongOrNull() ?: 0L))
                 uri == "/api/sessions" -> json(apiSessions())
+                uri == "/api/recurrence" -> json(apiRecurrence())
+                uri == "/api/settings" && session.method == Method.GET -> json(apiSettingsGet())
+                uri == "/api/settings" && session.method == Method.POST -> apiSettingsPost(session)
                 uri == "/api/marker" && session.method == Method.POST -> apiMarker()
                 uri.startsWith("/api/session/") -> storedSession(uri)
                 else -> text(Response.Status.NOT_FOUND, "not found")
@@ -187,6 +198,68 @@ class LanServer(
                         put("audioSource", s.audioSource)
                         put("recovered", s.recovered)
                         put("live", s.id == open)
+                    },
+                )
+            }
+        }.toString()
+    }
+
+    /** Impostazioni correnti dell'app, modificabili dalla dashboard. */
+    private fun apiSettingsGet(): String {
+        val settings = runBlocking { SettingsRepo.get(ctx).flow.first() }
+        return jsonCodec.encodeToString(settings)
+    }
+
+    /**
+     * Salva le impostazioni ricevute dalla dashboard. La sezione LAN resta
+     * quella del telefono (cambiarla da remoto taglierebbe la connessione);
+     * i parametri del motore valgono dalla prossima sessione.
+     */
+    private fun apiSettingsPost(session: IHTTPSession): Response {
+        val body = HashMap<String, String>()
+        session.parseBody(body)
+        val raw = body["postData"] ?: return text(Response.Status.BAD_REQUEST, "body mancante")
+        val incoming = runCatching { jsonCodec.decodeFromString<AppSettings>(raw) }.getOrNull()
+            ?: return text(Response.Status.BAD_REQUEST, "JSON impostazioni non valido")
+        runBlocking {
+            SettingsRepo.get(ctx).update { cur -> incoming.copy(lan = cur.lan) }
+        }
+        return json("""{"ok":true}""")
+    }
+
+    /**
+     * Ricorrenze: le ultime sessioni con eventi e soglie della cfg snapshot,
+     * per la heatmap notte-per-notte con intensità sulla dashboard.
+     */
+    private fun apiRecurrence(): String {
+        val sessions = runBlocking { dao.sessionsList() }.take(21)
+        return buildJsonArray {
+            for (s in sessions) {
+                val snap = runCatching { jsonCodec.decodeFromString<EngineCfg>(s.cfgJson) }.getOrNull()
+                val events = runBlocking { dao.events(s.id) }
+                add(
+                    buildJsonObject {
+                        put("id", s.id)
+                        put("label", s.label)
+                        put("startedAt", s.startedAt)
+                        put("endedAt", s.endedAt ?: s.lastT * 1000)
+                        put("eventsCount", s.eventsCount)
+                        putJsonObject("thr") {
+                            snap?.bands?.forEach { b -> put(b.id, b.thr) }
+                            snap?.vib?.let { put(Channels.VIB, it.thr) }
+                        }
+                        putJsonArray("events") {
+                            for (e in events) {
+                                add(
+                                    buildJsonObject {
+                                        put("band", e.band)
+                                        put("startT", e.startT)
+                                        put("endT", e.endT)
+                                        e.peakDb?.let { put("peakDb", round1(it)) }
+                                    },
+                                )
+                            }
+                        }
                     },
                 )
             }

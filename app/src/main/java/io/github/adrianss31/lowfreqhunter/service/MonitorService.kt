@@ -184,7 +184,7 @@ class MonitorService : Service() {
         val dao = LfhDb.get(this).dao()
         val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
         capture = cap
-        val rec = if (listenOnly) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
+        val rec = if (listenOnly) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
         recorder = rec
 
         // server LAN per il monitoraggio dal PC (se abilitato nel Setup)
@@ -294,7 +294,7 @@ class MonitorService : Service() {
         clipCount = 0
         uiDom.reset()
         val dao = LfhDb.get(this).dao()
-        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName)
+        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
         recorder = rec
         MonitorBus.resetSession()
         MonitorBus.state.value = MonitorBus.state.value.copy(
@@ -310,17 +310,26 @@ class MonitorService : Service() {
         updateNotification()
     }
 
-    /** Prossima occorrenza dell'ora di spezzamento dopo [nowMs] (locale). */
-    private fun nextSplitAfter(nowMs: Long): Long {
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = nowMs
-            set(java.util.Calendar.HOUR_OF_DAY, contCfg.splitMin / 60)
-            set(java.util.Calendar.MINUTE, contCfg.splitMin % 60)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
+    /** Prossimo spezzamento dopo [nowMs]: il più vicino tra quelli attivi. */
+    private fun nextSplitAfter(nowMs: Long): Long =
+        contCfg.splitMins().minOf { min ->
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMs
+                set(java.util.Calendar.HOUR_OF_DAY, min / 60)
+                set(java.util.Calendar.MINUTE, min % 60)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            if (cal.timeInMillis <= nowMs) cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+            cal.timeInMillis
         }
-        if (cal.timeInMillis <= nowMs) cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
-        return cal.timeInMillis
+
+    /** Etichetta della nuova sessione (Notte/Giorno) con due spezzamenti. */
+    private fun sessionLabelPrefix(): String {
+        if (!contCfg.enabled) return "Notte"
+        val cal = java.util.Calendar.getInstance()
+        val minOfDay = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        return contCfg.labelPrefixAt(minOfDay)
     }
 
     /** Stato istantaneo per la UI (schermate Live e Notte), smussato: i

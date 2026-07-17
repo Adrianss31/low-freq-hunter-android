@@ -18,11 +18,17 @@ informativa.
   gap di monitoraggio registrati; schermo spegnibile
 - **Canale V** — vibrazioni strutturali dall'accelerometro (dB rel 1 g)
 - **Programmazione** — avvio/stop automatico ogni notte (setAlarmClock +
-  activity-trampolino per l'accesso al microfono da background)
+  activity-trampolino per l'accesso al microfono da background);
+  **registrazione continua** con uno o due spezzamenti giornalieri
+  (es. 21:00 e 07:00 → sessioni "Notte" 21–7 e "Giorno" 7–21)
 - **Log** — timeline, statistiche, export report PNG / CSV / JSON in
   Documents/LowFreqHunter e via share sheet; **heatmap di ricorrenza**
-  (ora del giorno × notte sulle ultime sessioni: il disturbo che torna ogni
-  notte alla stessa ora si vede a colpo d'occhio)
+  (ora del giorno × notte sulle ultime sessioni: colore = intensità del
+  picco sopra soglia, il disturbo che torna ogni notte alla stessa ora si
+  vede a colpo d'occhio)
+- **Monitor dal PC** — dashboard web sulla LAN con live, archivio, centro
+  notifiche, heatmap di ricorrenza e modifica di tutte le impostazioni
+  dell'app dal browser (`/api/settings`, `/api/recurrence`)
 - **Stima dB SPL** opzionale — offset tarato dall'utente su un riferimento
   (fonometro o app); i report restano marcati come stima indicativa
 - Valori e grafici smussati: spettro e meter interpolati a 60 fps, livelli

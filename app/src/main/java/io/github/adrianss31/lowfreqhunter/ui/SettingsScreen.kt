@@ -249,12 +249,34 @@ fun SettingsScreen() {
             if (settings.continuous.enabled) {
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                    CapsLabel("Spezza alle", Modifier.weight(1f))
+                    CapsLabel(
+                        if (settings.continuous.split2Enabled) "Spezza alle (inizio Notte)" else "Spezza alle",
+                        Modifier.weight(1f),
+                    )
                     Stepper(
                         fmtHm(settings.continuous.splitMin),
                         onMinus = { upd { it.copy(continuous = it.continuous.copy(splitMin = (it.continuous.splitMin - 30 + 1440) % 1440)) } },
                         onPlus = { upd { it.copy(continuous = it.continuous.copy(splitMin = (it.continuous.splitMin + 30) % 1440)) } },
                     )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Secondo spezzamento", color = Lfh.Text, fontSize = 13.sp)
+                        CapsLabel("es. 21:00 e 07:00 → sessioni Notte e Giorno", color = Lfh.TextFaint)
+                    }
+                    HwSwitch(settings.continuous.split2Enabled) {
+                        upd { it.copy(continuous = it.continuous.copy(split2Enabled = !it.continuous.split2Enabled)) }
+                    }
+                }
+                if (settings.continuous.split2Enabled) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                        CapsLabel("Spezza alle (inizio Giorno)", Modifier.weight(1f))
+                        Stepper(
+                            fmtHm(settings.continuous.split2Min),
+                            onMinus = { upd { it.copy(continuous = it.continuous.copy(split2Min = (it.continuous.split2Min - 30 + 1440) % 1440)) } },
+                            onPlus = { upd { it.copy(continuous = it.continuous.copy(split2Min = (it.continuous.split2Min + 30) % 1440)) } },
+                        )
+                    }
                 }
                 CapsLabel(
                     "vale per le registrazioni avviate da ora · tieni il dispositivo in carica",

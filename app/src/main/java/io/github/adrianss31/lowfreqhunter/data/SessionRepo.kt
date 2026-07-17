@@ -29,6 +29,7 @@ class SessionRecorder(
     sampleRate: Int,
     binHz: Double,
     audioSource: String,
+    labelPrefix: String = "Notte",
 ) : NightEngine.Sink {
 
     val sessionId: String = UUID.randomUUID().toString()
@@ -41,7 +42,7 @@ class SessionRecorder(
 
     private var session = SessionEntity(
         id = sessionId,
-        label = "Notte " + SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.ITALIAN).format(Date(startedAt)),
+        label = "$labelPrefix " + SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.ITALIAN).format(Date(startedAt)),
         startedAt = startedAt,
         endedAt = null,
         lastT = startedAt / 1000,

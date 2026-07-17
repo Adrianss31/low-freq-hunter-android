@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.engine.Channels
+import io.github.adrianss31.lowfreqhunter.engine.Recurrence
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorService
 import io.github.adrianss31.lowfreqhunter.ui.Render.drawWaterfallSlices
@@ -122,7 +123,7 @@ fun NightScreen() {
         // strisce presenza
         Panel(Modifier.fillMaxWidth()) {
             val evCount = events.count { it.band != Channels.GAP }
-            CapsLabel("Presenza · $evCount eventi · ${markers.size} marker")
+            CapsLabel("Presenza · $evCount eventi · ${markers.size} marker · colore = intensità")
             Spacer(Modifier.height(8.dp))
             val t0 = bus.startedAt / 1000
             val span = maxOf(nowMs / 1000 - t0, 1L)
@@ -137,11 +138,22 @@ fun NightScreen() {
                             .background(Lfh.Surface2)
                     ) {
                         val color = if (ch == Channels.VIB) Lfh.VibColor else Lfh.bandColor(ch)
-                        val bars = events.filter { it.band == ch }.map { Pair(it.startT, it.endT) } +
-                            (bus.activeBands[ch]?.let { listOf(Pair(it, nowMs / 1000)) } ?: emptyList())
-                        for ((s, e) in bars) {
+                        val thr = if (ch == Channels.VIB) settings.engine.vib.thr
+                        else settings.engine.band(ch)?.thr ?: -55.0
+                        // eventi chiusi: colore = intensità del picco sopra soglia
+                        for (ev in events.filter { it.band == ch }) {
+                            val x0 = (ev.startT - t0).toFloat() / span * size.width
+                            val x1 = (ev.endT - t0).toFloat() / span * size.width
+                            val heat = Recurrence.heatOf((ev.peakDb ?: thr) - thr)
+                            drawRect(
+                                Render.wfColor(0.30f + 0.70f * heat),
+                                Offset(x0, 0f), Size(maxOf(x1 - x0, 3f), size.height),
+                            )
+                        }
+                        // evento in corso: colore banda
+                        bus.activeBands[ch]?.let { s ->
                             val x0 = (s - t0).toFloat() / span * size.width
-                            val x1 = (e - t0).toFloat() / span * size.width
+                            val x1 = (nowMs / 1000 - t0).toFloat() / span * size.width
                             drawRect(color, Offset(x0, 0f), Size(maxOf(x1 - x0, 3f), size.height))
                         }
                         if (ch == channels.first()) {
