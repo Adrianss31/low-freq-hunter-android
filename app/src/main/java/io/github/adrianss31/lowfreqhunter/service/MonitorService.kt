@@ -310,6 +310,71 @@ class MonitorService : Service() {
         updateNotification()
     }
 
+    /**
+     * Applica subito le impostazioni appena salvate (es. dalla dashboard PC)
+     * alla sessione in corso. Se i parametri del motore sono cambiati, la
+     * catena di analisi (cattura, motore, recorder, vibrazioni) viene chiusa
+     * e riaperta a caldo: nasce una nuova sessione con la nuova cfg, senza
+     * fermare il foreground service né il server LAN.
+     * Ritorna true se la sessione è stata riavviata.
+     */
+    fun applySettingsNow(): Boolean {
+        if (!running) return false
+        val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
+        contCfg = settings.continuous
+        nextSplitMs = if (contCfg.enabled && !listenMode) nextSplitAfter(System.currentTimeMillis()) else 0L
+        if (settings.engine == cfg) return false
+        val newCfg = settings.engine
+        scope.launch { restartChain(newCfg) }
+        return true
+    }
+
+    /** Riavvio a caldo della catena di analisi con una nuova [newCfg]. */
+    private fun restartChain(newCfg: EngineCfg) {
+        if (!running) return
+        val now = System.currentTimeMillis()
+        capture?.pcmTap = null
+        clipWriter?.let { runCatching { it.close() } }
+        clipWriter = null
+        capture?.stop()
+        vib?.stop()
+        vib = null
+        engine?.stop(now)
+        recorder?.close()
+
+        cfg = newCfg
+        evCount = 0
+        clipCount = 0
+        uiLevels.clear()
+        uiRef.reset()
+        uiVib.reset()
+        uiDom.reset()
+
+        val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
+        capture = cap
+        val dao = LfhDb.get(this).dao()
+        val rec = if (listenMode) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
+        recorder = rec
+        MonitorBus.resetSession()
+        MonitorBus.state.value = MonitorBus.state.value.copy(
+            sessionId = rec?.sessionId,
+            startedAt = rec?.startedAt ?: now,
+            eventsCount = 0,
+            activeBands = emptyMap(),
+            audioSource = cap.sourceName,
+        )
+        val eng = NightEngine(cfg, sink)
+        eng.batteryPct = readBattery()
+        eng.start(now)
+        engine = eng
+        if (cfg.vib.enabled) {
+            val v = VibrationEngine(this)
+            if (v.start({ db -> engine?.vibDb = db })) vib = v
+        }
+        startCapture(cap)
+        updateNotification()
+    }
+
     /** Prossimo spezzamento dopo [nowMs]: il più vicino tra quelli attivi. */
     private fun nextSplitAfter(nowMs: Long): Long =
         contCfg.splitMins().minOf { min ->
@@ -436,14 +501,14 @@ class MonitorService : Service() {
         val lines = StringBuilder()
         val evs = MonitorBus.events.value.filter { it.band != Channels.GAP }
         if (evs.isEmpty()) {
-            lines.append("Nessun evento sopra soglia.")
+            lines.append("Nessun rumore oltre la soglia.")
         } else {
             val perBand = evs.groupBy { it.band }.entries.joinToString("  ") { "${cfg.channelLabel(it.key)}:${it.value.size}" }
             lines.append("Eventi: ${evs.size}  ($perBand)")
         }
         val nowS = System.currentTimeMillis() / 1000
         for ((band, since) in st.activeBands) {
-            lines.append("\n● ${cfg.channelLabel(band)} sopra soglia da ${fmtDur(nowS - since)}")
+            lines.append("\n● ${cfg.channelLabel(band)} rumore in corso da ${fmtDur(nowS - since)}")
         }
         val top = st.levels.maxByOrNull { it.value }
         if (top != null) {

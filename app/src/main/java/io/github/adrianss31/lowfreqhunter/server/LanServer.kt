@@ -15,6 +15,7 @@ import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.data.SliceEntity
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.EngineCfg
+import io.github.adrianss31.lowfreqhunter.engine.Recurrence
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorService
 import kotlinx.coroutines.flow.first
@@ -211,9 +212,11 @@ class LanServer(
     }
 
     /**
-     * Salva le impostazioni ricevute dalla dashboard. La sezione LAN resta
-     * quella del telefono (cambiarla da remoto taglierebbe la connessione);
-     * i parametri del motore valgono dalla prossima sessione.
+     * Salva le impostazioni ricevute dalla dashboard e le applica SUBITO
+     * alla sessione in corso: se i parametri del motore sono cambiati il
+     * servizio riavvia a caldo la catena di analisi (nuova sessione con la
+     * nuova cfg, cattura mai ferma). La sezione LAN resta quella del
+     * telefono (cambiarla da remoto taglierebbe la connessione).
      */
     private fun apiSettingsPost(session: IHTTPSession): Response {
         val body = HashMap<String, String>()
@@ -224,40 +227,63 @@ class LanServer(
         runBlocking {
             SettingsRepo.get(ctx).update { cur -> incoming.copy(lan = cur.lan) }
         }
-        return json("""{"ok":true}""")
+        val restarted = runCatching { MonitorService.instance?.applySettingsNow() }.getOrNull() ?: false
+        return json("""{"ok":true,"restarted":$restarted}""")
     }
 
     /**
-     * Ricorrenze: le ultime sessioni con eventi e soglie della cfg snapshot,
-     * per la heatmap notte-per-notte con intensità sulla dashboard.
+     * Ricorrenze per la heatmap della dashboard: per ogni sessione recente,
+     * il MASSIMO di (livello − soglia) per canale e fascia oraria, aggregato
+     * qui sul telefono (mandare i campioni grezzi sarebbe troppo pesante).
+     * null = fascia senza campioni. La scala colori −10…+10 dB è del client.
      */
     private fun apiRecurrence(): String {
-        val sessions = runBlocking { dao.sessionsList() }.take(21)
+        val sessions = runBlocking { dao.sessionsList() }
+            .filter { (it.endedAt ?: it.lastT * 1000) > it.startedAt }
+            .take(14)
         return buildJsonArray {
             for (s in sessions) {
                 val snap = runCatching { jsonCodec.decodeFromString<EngineCfg>(s.cfgJson) }.getOrNull()
-                val events = runBlocking { dao.events(s.id) }
+                val thr = buildMap {
+                    snap?.bands?.forEach { put(it.id, it.thr) }
+                    snap?.vib?.let { put(Channels.VIB, it.thr) }
+                }
+                val all = runBlocking { dao.samples(s.id) }
+                val step = maxOf(1, all.size / 3000)
+                val levels = buildList {
+                    for (i in all.indices step step) {
+                        val smp = all[i]
+                        val lv = runCatching {
+                            jsonCodec.decodeFromString<Map<String, Double>>(smp.lvJson)
+                        }.getOrNull() ?: continue
+                        val over = buildMap {
+                            for ((band, db) in lv) {
+                                thr[band]?.let { put(band, (db - it).toFloat()) }
+                            }
+                            smp.vibDb?.let { v ->
+                                thr[Channels.VIB]?.let { put(Channels.VIB, (v - it).toFloat()) }
+                            }
+                        }
+                        if (over.isNotEmpty()) add(Recurrence.LevelSample(smp.t, over))
+                    }
+                }
+                val night = Recurrence.nightLevels(s.label, levels)
                 add(
                     buildJsonObject {
                         put("id", s.id)
                         put("label", s.label)
                         put("startedAt", s.startedAt)
-                        put("endedAt", s.endedAt ?: s.lastT * 1000)
-                        put("eventsCount", s.eventsCount)
-                        putJsonObject("thr") {
-                            snap?.bands?.forEach { b -> put(b.id, b.thr) }
-                            snap?.vib?.let { put(Channels.VIB, it.thr) }
-                        }
-                        putJsonArray("events") {
-                            for (e in events) {
-                                add(
-                                    buildJsonObject {
-                                        put("band", e.band)
-                                        put("startT", e.startT)
-                                        put("endT", e.endT)
-                                        e.peakDb?.let { put("peakDb", round1(it)) }
-                                    },
-                                )
+                        putJsonObject("bands") {
+                            for ((band, arr) in night.maxOverByBand) {
+                                putJsonArray(band) {
+                                    for (v in arr) {
+                                        if (v.isNaN()) {
+                                            add(kotlinx.serialization.json.JsonNull)
+                                        } else {
+                                            add(kotlinx.serialization.json.JsonPrimitive(round1(v.toDouble())))
+                                        }
+                                    }
+                                }
                             }
                         }
                     },

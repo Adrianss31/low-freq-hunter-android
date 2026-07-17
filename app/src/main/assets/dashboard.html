@@ -176,12 +176,12 @@
 </div>
 
 <div class="panel">
-  <div class="caps">Ricorrenza · righe = sessioni · colore = intensità del picco sopra soglia</div>
+  <div class="caps">Ricorrenza · righe = sessioni · colore = livello max rispetto alla soglia</div>
   <canvas id="rec" height="40" style="margin-top:8px;cursor:crosshair"></canvas>
   <div class="row" style="margin-top:6px">
-    <span class="caps">soglia</span>
+    <span class="caps">−10 dB</span>
     <canvas id="reclegend" width="220" height="8" style="width:220px"></canvas>
-    <span class="caps">+15 dB</span>
+    <span class="caps">+10 dB · tacca bianca = soglia</span>
     <span style="flex:1"></span>
     <span class="caps" id="recinfo"></span>
   </div>
@@ -194,7 +194,8 @@
   </div>
   <div id="setbody" style="display:none;margin-top:10px">
     <div class="caps" style="color:var(--amber);margin-bottom:8px">
-      le modifiche a bande, soglie e analisi valgono dalla prossima sessione
+      al salvataggio, se cambi bande/soglie/analisi la sessione in corso viene
+      chiusa e ne parte subito una nuova coi parametri aggiornati
     </div>
     <div id="setform"></div>
     <div class="row" style="margin-top:12px">
@@ -292,9 +293,9 @@ function mergeSession(d, silent){
 
 // ── centro notifiche: regole, trigger di sistema, registro ─────────────────
 const RTYPES={
-  lvl_above:'sale sopra soglia', lvl_below:'scende sotto soglia',
-  ev_start:'banda sopra soglia (subito)', ev_end:'evento registrato (a fine evento)',
-  ev_pulse:'evento pulsante ∿', active_long:'attiva da più di…',
+  lvl_above:'rumore più FORTE di un livello', lvl_below:'rumore più DEBOLE di un livello',
+  ev_start:'rumore rilevato (avviso subito)', ev_end:'evento registrato (a fine evento)',
+  ev_pulse:'evento pulsante ∿', active_long:'rumore continuo da più di…',
   quiet_long:'silenzio da più di…', dom_range:'dominante in un range Hz'};
 const SNDS={none:'nessuno', beep:'beep', low:'grave', dbl:'doppio'};
 let rules=load('rules',null);
@@ -376,8 +377,8 @@ function evalRules(){
         const key=id+'_'+since;
         if(nowS-since>=(r.holdMin||10)*60 && !rt.keys.has(key) && canFire(r)){
           rt.keys.add(key);
-          fireRule(r,`${bandLabel(id)} attiva da ${fmtDur(nowS-since)}`,
-            `sopra soglia ininterrottamente dalle ${fmtT(since)}`);
+          fireRule(r,`${bandLabel(id)} rumore continuo da ${fmtDur(nowS-since)}`,
+            `più forte della soglia senza pause dalle ${fmtT(since)}`);
         }
       }
       if(rt.keys.size>40) rt.keys=new Set([...rt.keys].slice(-10));
@@ -388,7 +389,7 @@ function evalRules(){
         if(rt.quietAt==null) rt.quietAt=nowMs;
         if(rt.wasActive && nowMs-rt.quietAt>=(r.holdMin||10)*60000 && canFire(r)){
           rt.wasActive=false;
-          fireRule(r,`silenzio da ${r.holdMin} min`,`nessuna banda sopra soglia dalle ${fmtT(rt.quietAt/1000)}`);
+          fireRule(r,`silenzio da ${r.holdMin} min`,`nessun rumore oltre la soglia dalle ${fmtT(rt.quietAt/1000)}`);
         }
       }
     }
@@ -410,7 +411,7 @@ function evalRules(){
   for(const id of Object.keys(act)) if(!(id in prevActive))
     for(const r of rules)
       if(r.type==='ev_start'&&(r.band==='any'||r.band===id)&&canFire(r))
-        fireRule(r,`${bandLabel(id)} sopra soglia`,`inizio alle ${fmtT(act[id])}`);
+        fireRule(r,`${bandLabel(id)} — rumore rilevato`,`più forte della soglia dalle ${fmtT(act[id])}`);
   prevActive=act;
   evalSysOk();
 }
@@ -473,12 +474,12 @@ function ruleDesc(r){
   const b=`<span style="color:${r.band==='any'?'var(--text)':(r.band==='ref'?'var(--dim)':bandColor(r.band))}">${bandName(r.band)}</span>`;
   let main;
   switch(r.type){
-    case 'lvl_above': main=`${b} sale sopra <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
-    case 'lvl_below': main=`${b} scende sotto <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
-    case 'ev_start': main=`${b} sopra soglia (avviso subito)`; break;
+    case 'lvl_above': main=`${b} più forte di <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
+    case 'lvl_below': main=`${b} più debole di <b>${r.thr}</b> dBFS`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
+    case 'ev_start': main=`${b} rumore rilevato (avviso subito)`; break;
     case 'ev_end': main=`evento registrato · ${b}`; break;
     case 'ev_pulse': main=`evento pulsante ∿ · ${b}`; break;
-    case 'active_long': main=`${b} attiva da più di <b>${r.holdMin}</b> min`; break;
+    case 'active_long': main=`${b} rumore continuo da più di <b>${r.holdMin}</b> min`; break;
     case 'quiet_long': main=`silenzio da più di <b>${r.holdMin}</b> min`; break;
     case 'dom_range': main=`dominante tra <b>${r.hzLo}–${r.hzHi}</b> Hz`+((r.sustainS||0)>0?` per ${r.sustainS} s`:''); break;
     default: main=r.type;
@@ -528,7 +529,8 @@ function openEditor(r){
     el('re_bandwrap').style.display = t==='quiet_long'||t==='dom_range' ? 'none':'';
     el('re_params').innerHTML =
       t==='lvl_above'||t==='lvl_below'
-        ? `soglia <input type="number" id="re_thr" value="${v.thr??-55}" step="0.5"> dBFS
+        ? `${t==='lvl_above'?'più forte di':'più debole di'} <input type="number" id="re_thr" value="${v.thr??-55}" step="0.5"> dBFS
+           <span style="color:var(--faint)">(più vicino a 0 = più forte)</span>
            · per almeno <input type="number" id="re_sus" value="${v.sustainS??5}" min="0"> s`
       : t==='active_long'||t==='quiet_long'
         ? `più di <input type="number" id="re_hold" value="${v.holdMin??15}" min="1"> min`
@@ -592,7 +594,7 @@ function renderMeters(){
   el('domhz').textContent = state.running ? state.domHz.toFixed(1) : '—';
   const act = Object.entries(state.activeBands||{});
   el('activetxt').textContent = act.length
-    ? '● sopra soglia da '+fmtDur(state.now/1000-Math.min(...act.map(a=>a[1]))) : 'silenzio';
+    ? '● rumore in corso da '+fmtDur(state.now/1000-Math.min(...act.map(a=>a[1]))) : 'silenzio';
   el('activetxt').style.color = act.length ? 'var(--rec)' : 'var(--faint)';
   // stima SPL (se calibrata sul telefono): banda più forte
   const off = cfg?.splOffsetDb;
@@ -706,7 +708,7 @@ function renderStats(){
     `<span style="color:${bandColor(id)}">${bandLabel(id)}&thinsp;${byBand[id]}</span>`).join(' · ');
   const off = cfg?.splOffsetDb;
   el('stats').innerHTML =
-    `durata <b>${fmtDur(tot)}</b> · sopra soglia <b>${fmtDur(noisy)}</b> (${tot>0?(noisy/tot*100).toFixed(1):0}%)<br>`+
+    `durata <b>${fmtDur(tot)}</b> · con rumore <b>${fmtDur(noisy)}</b> (${tot>0?(noisy/tot*100).toFixed(1):0}%)<br>`+
     `eventi <b>${S.events.length}</b>${bandsLine?' · '+bandsLine:''}<br>`+
     `marker <b>${S.markers.length}</b> · picco <b>${peak>-999?peak.toFixed(1)+' dBFS':'—'}</b>`+
     (peak>-999&&off!=null?` <span style="color:var(--amber)">≈ ${Math.round(peak+off)} dB SPL</span>`:'')+
@@ -746,7 +748,7 @@ function renderEvents(){
       <td style="color:var(--dim)">${e.avgDb!=null?e.avgDb.toFixed(1):'—'}</td></tr>`);
   });
   el('evrows').innerHTML = rows.join('') ||
-    '<tr><td colspan="5" style="color:var(--faint)">nessun evento sopra soglia</td></tr>';
+    '<tr><td colspan="5" style="color:var(--faint)">nessun rumore oltre la soglia</td></tr>';
 }
 let hl=null; // evidenziazione evento sul grafico
 el('evrows').addEventListener('click',e=>{
@@ -1003,32 +1005,23 @@ el('chart').addEventListener('mousemove',e=>{
 });
 el('chart').addEventListener('mouseleave',()=>tip());
 
-// ── ricorrenza: heatmap sessioni × ora del giorno, colore = intensità ──────
+// ── ricorrenza: heatmap sessioni × ora, colore = livello vs soglia ─────────
+// scala −10…+10 dB attorno alla soglia (la soglia è il CENTRO della scala);
+// il telefono manda già gli aggregati per fascia (max livello − soglia)
 const R_BUCKETS=48, R_BUCKET_S=86400/R_BUCKETS, R_ROWH=18, R_GUT=64;
+const R_DB_MIN=-10, R_DB_MAX=10;
+const lvlScale=v=>Math.max(0,Math.min(1,(v-R_DB_MIN)/(R_DB_MAX-R_DB_MIN)));
 let recNights=[];
-function recAdd(acc,aS,bS,w){ w=w==null?1:w; let t=aS; const end=Math.min(bS,aS+86400);
-  while(t<end){ const off=-new Date(t*1000).getTimezoneOffset()*60;
-    const sod=(((t+off)%86400)+86400)%86400;
-    const bkt=Math.min(R_BUCKETS-1,Math.floor(sod/R_BUCKET_S));
-    const next=t+(R_BUCKET_S-sod%R_BUCKET_S);
-    const chunk=Math.min(next,end)-t;
-    acc[bkt]+=chunk*w; t+=chunk; } }
 async function loadRecurrence(){
   try{
     const list=await api('/api/recurrence');
-    recNights=list.filter(s=>s.endedAt>s.startedAt).map(s=>{
-      const cover=new Float32Array(R_BUCKETS), active=new Float32Array(R_BUCKETS), heat=new Float32Array(R_BUCKETS);
-      recAdd(cover,s.startedAt/1000,s.endedAt/1000);
-      for(const e of (s.events||[])){
-        if(e.band==='gap'){ const g=new Float32Array(R_BUCKETS); recAdd(g,e.startT,e.endT);
-          for(let i=0;i<R_BUCKETS;i++) cover[i]=Math.max(0,cover[i]-g[i]); continue; }
-        recAdd(active,e.startT,e.endT);
-        const thr=s.thr?.[e.band];
-        const h=(thr!=null&&e.peakDb!=null)?Math.max(0.06,Math.min(1,(e.peakDb-thr)/15)):0.2;
-        recAdd(heat,e.startT,e.endT,h);
-      }
+    recNights=list.map(s=>{
+      // max tra le bande, per fascia (null = nessun campione)
+      const over=new Array(R_BUCKETS).fill(null);
+      for(const arr of Object.values(s.bands||{}))
+        arr.forEach((v,i)=>{ if(v!=null&&(over[i]==null||v>over[i])) over[i]=v; });
       return {label:new Date(s.startedAt).toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit'}),
-              name:s.label, cover, active, heat, startedAt:s.startedAt};
+              name:s.label, over, bands:s.bands||{}};
     });
     el('recinfo').textContent=recNights.length?recNights.length+' sessioni':'nessuna sessione';
     drawRecurrence();
@@ -1045,13 +1038,8 @@ function drawRecurrence(){
     g.fillStyle='#8a8a96'; g.fillText(n.label,2,y+R_ROWH-6);
     for(let b=0;b<R_BUCKETS;b++){
       const x=R_GUT+b*plotW/R_BUCKETS, cw=plotW/R_BUCKETS+0.5;
-      if(n.cover[b]<R_BUCKET_S*0.05){ g.fillStyle='#0a0a0c'; }
-      else if(n.active[b]<=0){ g.fillStyle='#1c1c22'; }
-      else{
-        const frac=Math.min(1,n.active[b]/n.cover[b]);
-        const heat=Math.min(1,n.heat[b]/n.active[b]);
-        g.fillStyle=wfColor((0.30+0.70*heat)*(0.45+0.55*frac));
-      }
+      const v=n.over[b];
+      g.fillStyle = v==null ? '#0a0a0c' : wfColor(lvlScale(v));
       g.fillRect(x,y+1,cw,R_ROWH-3);
     }
   });
@@ -1069,13 +1057,17 @@ el('rec').addEventListener('mousemove',e=>{
   const b=Math.min(R_BUCKETS-1,Math.floor(fx*R_BUCKETS));
   const hh=String(Math.floor(b*R_BUCKET_S/3600)).padStart(2,'0');
   const mm=String(Math.floor(b*R_BUCKET_S%3600/60)).padStart(2,'0');
-  const overDb=n.active[b]>0?(n.heat[b]/n.active[b]*15):0;
-  tip(e.clientX,e.clientY,`${n.name}\n${hh}:${mm} · attivo ${fmtDur(n.active[b])}`+
-    (n.active[b]>0?`\npicco medio +${overDb.toFixed(1)} dB sopra soglia`:''));
+  let txt=`${n.name}\n${hh}:${mm}`;
+  if(n.over[b]==null) txt+='\nnon monitorato';
+  else for(const [band,arr] of Object.entries(n.bands)){
+    if(arr[b]!=null) txt+=`\n${bandLabel(band)}  ${arr[b]>=0?'+':''}${arr[b].toFixed(1)} dB vs soglia`;
+  }
+  tip(e.clientX,e.clientY,txt);
 });
 el('rec').addEventListener('mouseleave',()=>tip());
 (function(){ const g=el('reclegend').getContext('2d');
-  for(let i=0;i<220;i++){ g.fillStyle=wfColor(0.30+0.70*i/219); g.fillRect(i,0,1,8); } })();
+  for(let i=0;i<220;i++){ g.fillStyle=wfColor(i/219); g.fillRect(i,0,1,8); }
+  g.fillStyle='#fff'; g.fillRect(109,0,2,8); })();
 
 // ── impostazioni dell'app ──────────────────────────────────────────────────
 let SET=null;
@@ -1163,7 +1155,12 @@ el('setsave').addEventListener('click',async()=>{
   collectSettings();
   try{
     const r=await fetch('/api/settings?k='+K,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SET)});
-    el('setmsg').textContent=r.ok?'✓ salvate sul telefono':'errore: '+await r.text();
+    if(r.ok){
+      const d=await r.json().catch(()=>({}));
+      el('setmsg').textContent=d.restarted
+        ? '✓ salvate — sessione riavviata subito con i nuovi parametri'
+        : '✓ salvate sul telefono';
+    }else el('setmsg').textContent='errore: '+await r.text();
   }catch(e){ el('setmsg').textContent='telefono non raggiungibile'; }
 });
 

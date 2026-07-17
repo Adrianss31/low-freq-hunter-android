@@ -13,6 +13,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.clipToBounds
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -44,8 +50,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -239,6 +248,21 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
 
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var heat by remember { mutableStateOf<HeatmapRender.Result?>(null) }
+
+    // ── zoom con le dita sulla mappa (pinch + pan, doppio tap = tutta) ──────
+    var mapScale by remember(surveyId) { mutableStateOf(1f) }
+    var mapPan by remember(surveyId) { mutableStateOf(Offset.Zero) }
+
+    fun clampPan(pan: Offset, scale: Float): Offset = Offset(
+        pan.x.coerceIn(mapSize.width * (1f - scale), 0f),
+        pan.y.coerceIn(mapSize.height * (1f - scale), 0f),
+    )
+
+    /** Da coordinate del riquadro a coordinate del contenuto (pre-zoom). */
+    fun toContent(off: Offset): Offset = Offset(
+        (off.x - mapPan.x) / mapScale,
+        (off.y - mapPan.y) / mapScale,
+    )
     LaunchedEffect(points, selCh, mapSize) {
         val ch = selCh
         if (ch == null || mapSize.width <= 0) {
@@ -370,19 +394,66 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
                 .border(1.dp, Lfh.Border)
                 .background(Lfh.Bg)
                 .onSizeChanged { mapSize = it }
+                .clipToBounds()
                 .pointerInput(points, mapSize) {
                     detectTapGestures(
                         onTap = { off ->
+                            val c = toContent(off)
                             if (samplingJob.value != null) {
                                 cancelSampling()
-                            } else if (size.width > 0) {
-                                startSampling(off.x / size.width, off.y / size.height)
+                            } else if (size.width > 0 &&
+                                c.x in 0f..size.width.toFloat() && c.y in 0f..size.height.toFloat()
+                            ) {
+                                startSampling(c.x / size.width, c.y / size.height)
                             }
                         },
-                        onLongPress = { off -> deleteNearest(off) },
+                        onDoubleTap = {
+                            mapScale = 1f
+                            mapPan = Offset.Zero
+                        },
+                        onLongPress = { off -> deleteNearest(toContent(off)) },
                     )
+                }
+                // pinch per zoomare (fino a 6×); a mappa ingrandita un dito
+                // trascina la vista, il doppio tap torna alla vista intera
+                .pointerInput(mapSize) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.count { it.pressed }
+                            if (pressed > 1 || (mapScale > 1f && pressed == 1)) {
+                                val zoom = event.calculateZoom()
+                                val pan = event.calculatePan()
+                                val centroid = event.calculateCentroid()
+                                val newScale = (mapScale * zoom).coerceIn(1f, 6f)
+                                var newPan = mapPan
+                                if (newScale != mapScale && centroid.isSpecified) {
+                                    // zoom centrato sul punto tra le dita
+                                    newPan = (newPan - centroid) * (newScale / mapScale) + centroid
+                                }
+                                newPan += pan
+                                mapScale = newScale
+                                mapPan = clampPan(newPan, newScale)
+                                if (zoom != 1f || pan != Offset.Zero) {
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
                 },
         ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = mapScale
+                        scaleY = mapScale
+                        translationX = mapPan.x
+                        translationY = mapPan.y
+                    },
+            ) {
             val bg = bgBitmap
             if (bg != null) {
                 Image(
@@ -429,6 +500,17 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
                     )
                 }
+            }
+            }
+            if (mapScale > 1f) {
+                CapsLabel(
+                    "${"%.1f".format(mapScale)}× · doppio tap = tutta",
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .background(Lfh.Bg.copy(alpha = 0.75f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    color = Lfh.Accent,
+                )
             }
         }
 

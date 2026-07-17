@@ -50,6 +50,57 @@ object Recurrence {
     /** Intensità 0..1 di un picco [overDb] dB sopra soglia (satura a +15). */
     fun heatOf(overDb: Double): Float = (overDb / 15.0).toFloat().coerceIn(0.06f, 1f)
 
+    // ── heatmap a livelli: colore da −10 a +10 dB attorno alla soglia ──────
+
+    /** Range della scala colori della heatmap (dB relativi alla soglia). */
+    const val LVL_MIN_DB = -10f
+    const val LVL_MAX_DB = 10f
+
+    /** Posizione 0..1 sulla scala colori di un livello [overDb] vs soglia. */
+    fun lvlScale(overDb: Float): Float =
+        ((overDb - LVL_MIN_DB) / (LVL_MAX_DB - LVL_MIN_DB)).coerceIn(0f, 1f)
+
+    /** Un campione registrato: istante + livello−soglia per canale (dB). */
+    class LevelSample(val t: Long, val overByBand: Map<String, Float>)
+
+    /**
+     * Livelli di una sessione per fascia oraria: il MASSIMO di (livello −
+     * soglia) per canale, anche sotto soglia — la soglia non è più il punto
+     * di partenza della scala ma il suo centro. NaN = nessun campione.
+     */
+    class NightLevels(
+        val label: String,
+        val maxOverByBand: Map<String, FloatArray>,
+    ) {
+        /** Max della sola banda [band], o max tra tutte le bande se null. */
+        fun maxOver(band: String? = null): FloatArray {
+            if (band != null) return maxOverByBand[band] ?: FloatArray(BUCKETS) { Float.NaN }
+            val out = FloatArray(BUCKETS) { Float.NaN }
+            for (a in maxOverByBand.values) for (i in a.indices) {
+                if (!a[i].isNaN() && (out[i].isNaN() || a[i] > out[i])) out[i] = a[i]
+            }
+            return out
+        }
+    }
+
+    /** Aggrega i [samples] di una sessione nelle fasce orarie del giorno. */
+    fun nightLevels(
+        label: String,
+        samples: List<LevelSample>,
+        tz: TimeZone = TimeZone.getDefault(),
+    ): NightLevels {
+        val acc = HashMap<String, FloatArray>()
+        for (s in samples) {
+            val sod = ((s.t * 1000 + tz.getOffset(s.t * 1000)) / 1000).mod(86400L)
+            val bkt = (sod / BUCKET_S).toInt().coerceIn(0, BUCKETS - 1)
+            for ((band, over) in s.overByBand) {
+                val a = acc.getOrPut(band) { FloatArray(BUCKETS) { Float.NaN } }
+                if (a[bkt].isNaN() || over > a[bkt]) a[bkt] = over
+            }
+        }
+        return NightLevels(label, acc)
+    }
+
     /**
      * Distribuisce l'intervallo [aS, bS) (epoch secondi) sulle fasce orarie
      * del giorno locale, sommando i secondi in [acc]. Oltre le 24 h satura:

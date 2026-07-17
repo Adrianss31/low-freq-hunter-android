@@ -66,6 +66,36 @@ class ContinuousTest {
     }
 
     @Test
+    fun livelliMaxPerFascia_ancheSottoSoglia() {
+        val utc = TimeZone.getTimeZone("UTC")
+        // campioni a 00:10 (−8 dB vs soglia) e 00:20 (−3), a 01:05 (+4)
+        val night = Recurrence.nightLevels(
+            "n1",
+            listOf(
+                Recurrence.LevelSample(600, mapOf("A" to -8f)),
+                Recurrence.LevelSample(1200, mapOf("A" to -3f)),
+                Recurrence.LevelSample(3900, mapOf("A" to 4f)),
+            ),
+            utc,
+        )
+        val over = night.maxOver("A")
+        assertEquals(-3f, over[0], 0.001f)          // max della fascia 00:00–00:30
+        assertEquals(4f, over[2], 0.001f)           // fascia 01:00–01:30
+        assertEquals(true, over[1].isNaN())         // fascia senza campioni
+        // "tutte" = max tra bande
+        assertEquals(-3f, night.maxOver(null)[0], 0.001f)
+    }
+
+    @Test
+    fun scalaColoriCentrataSullaSoglia() {
+        assertEquals(0f, Recurrence.lvlScale(-15f), 0f)     // sotto il fondo scala
+        assertEquals(0f, Recurrence.lvlScale(-10f), 0f)
+        assertEquals(0.5f, Recurrence.lvlScale(0f), 0.001f) // soglia = centro
+        assertEquals(1f, Recurrence.lvlScale(10f), 0f)
+        assertEquals(1f, Recurrence.lvlScale(25f), 0f)      // satura
+    }
+
+    @Test
     fun gapNonProduceHeat() {
         val utc = TimeZone.getTimeZone("UTC")
         val night = Recurrence.night(

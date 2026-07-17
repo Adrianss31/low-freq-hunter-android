@@ -23,12 +23,15 @@ informativa.
   (es. 21:00 e 07:00 → sessioni "Notte" 21–7 e "Giorno" 7–21)
 - **Log** — timeline, statistiche, export report PNG / CSV / JSON in
   Documents/LowFreqHunter e via share sheet; **heatmap di ricorrenza**
-  (ora del giorno × notte sulle ultime sessioni: colore = intensità del
-  picco sopra soglia, il disturbo che torna ogni notte alla stessa ora si
-  vede a colpo d'occhio)
+  (ora del giorno × notte sulle ultime sessioni: colore = livello massimo
+  rispetto alla soglia su scala −10…+10 dB — la soglia è il centro, si vede
+  anche il rumore che si avvicina senza superarla)
 - **Monitor dal PC** — dashboard web sulla LAN con live, archivio, centro
   notifiche, heatmap di ricorrenza e modifica di tutte le impostazioni
-  dell'app dal browser (`/api/settings`, `/api/recurrence`)
+  dell'app dal browser (`/api/settings`, `/api/recurrence`); al salvataggio
+  la sessione in corso riparte subito coi nuovi parametri
+- **Mappa** — heatmap della casa per frequenza, con pinch-zoom per
+  posizionare con precisione il punto di misura
 - **Stima dB SPL** opzionale — offset tarato dall'utente su un riferimento
   (fonometro o app); i report restano marcati come stima indicativa
 - Valori e grafici smussati: spettro e meter interpolati a 60 fps, livelli
