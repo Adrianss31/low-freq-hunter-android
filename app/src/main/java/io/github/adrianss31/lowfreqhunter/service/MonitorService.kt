@@ -17,9 +17,11 @@ import androidx.core.content.ContextCompat
 import io.github.adrianss31.lowfreqhunter.MainActivity
 import io.github.adrianss31.lowfreqhunter.audio.CaptureEngine
 import io.github.adrianss31.lowfreqhunter.audio.ClipWriter
+import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.SessionRecorder
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
+import io.github.adrianss31.lowfreqhunter.data.windowStartMs
 import io.github.adrianss31.lowfreqhunter.dsp.Bands
 import io.github.adrianss31.lowfreqhunter.dsp.Ema
 import io.github.adrianss31.lowfreqhunter.dsp.MovingMedian
@@ -40,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
@@ -184,8 +187,16 @@ class MonitorService : Service() {
         val dao = LfhDb.get(this).dao()
         val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
         capture = cap
-        val rec = if (listenOnly) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
+        val rec = if (listenOnly) {
+            null
+        } else {
+            // stessa finestra giorno/notte e stessa cfg → si prosegue la
+            // sessione esistente invece di crearne una nuova
+            val resume = findResumable(dao, settings)
+            SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), resume)
+        }
         recorder = rec
+        evCount = rec?.eventsCount?.value ?: 0
 
         // server LAN per il monitoraggio dal PC (se abilitato nel Setup)
         var lanUrl: String? = null
@@ -388,6 +399,21 @@ class MonitorService : Service() {
             if (cal.timeInMillis <= nowMs) cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
             cal.timeInMillis
         }
+
+    /**
+     * Sessione da proseguire: l'ultima salvata, se è iniziata dentro la
+     * finestra giorno/notte corrente e con la stessa configurazione del
+     * motore. Le registrazioni della stessa finestra diventano così UNA
+     * sessione sola (stop/ripresa manuali o automatici inclusi).
+     */
+    private fun findResumable(dao: io.github.adrianss31.lowfreqhunter.data.LfhDao, settings: AppSettings): io.github.adrianss31.lowfreqhunter.data.SessionEntity? {
+        val last = runBlocking { dao.sessionsList().firstOrNull() } ?: return null
+        if (last.startedAt < settings.windowStartMs()) return null
+        val snap = runCatching {
+            Json { ignoreUnknownKeys = true }.decodeFromString<EngineCfg>(last.cfgJson)
+        }.getOrNull()
+        return if (snap == cfg) last else null
+    }
 
     /** Etichetta della nuova sessione (Notte/Giorno) con due spezzamenti. */
     private fun sessionLabelPrefix(): String {

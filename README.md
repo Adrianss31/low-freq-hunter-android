@@ -30,8 +30,13 @@ informativa.
   notifiche, heatmap di ricorrenza e modifica di tutte le impostazioni
   dell'app dal browser (`/api/settings`, `/api/recurrence`); al salvataggio
   la sessione in corso riparte subito coi nuovi parametri
-- **Mappa** — heatmap della casa per frequenza, con pinch-zoom per
-  posizionare con precisione il punto di misura
+- **Mappa** — heatmap della casa per frequenza; pinch-zoom e mirino di
+  conferma: tocchi ≈ dove sei, rifinisci trascinando (movimento relativo,
+  niente dito grosso) e premi MISURA
+- **Sessioni unite per finestra** — le registrazioni avviate nella stessa
+  finestra giorno/notte (dagli spezzamenti o dalla programmazione, altrimenti
+  il giorno solare) proseguono la stessa sessione: stop e riprese, manuali o
+  automatici, restano un'unica registrazione con il buco documentato come gap
 - **Stima dB SPL** opzionale — offset tarato dall'utente su un riferimento
   (fonometro o app); i report restano marcati come stima indicativa
 - Valori e grafici smussati: spettro e meter interpolati a 60 fps, livelli

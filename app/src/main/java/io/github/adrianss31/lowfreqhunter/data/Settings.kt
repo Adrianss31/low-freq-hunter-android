@@ -52,6 +52,38 @@ data class ContinuousCfg(
     }
 }
 
+/**
+ * Inizio (epoch ms) della finestra di registrazione corrente: l'ultimo
+ * confine passato tra gli spezzamenti della registrazione continua (se
+ * attiva), oppure gli orari della programmazione (se attiva), oppure la
+ * mezzanotte. Una registrazione avviata nella stessa finestra di una
+ * sessione esistente PROSEGUE quella sessione invece di crearne una nuova.
+ */
+fun AppSettings.windowStartMs(
+    now: Long = System.currentTimeMillis(),
+    tz: java.util.TimeZone = java.util.TimeZone.getDefault(),
+): Long {
+    val mins = when {
+        continuous.enabled -> continuous.splitMins()
+        schedule.enabled -> listOf(schedule.startMin, schedule.endMin)
+        else -> listOf(0)
+    }
+    return mins.maxOf { lastOccurrenceMs(it, now, tz) }
+}
+
+/** Ultima occorrenza (epoch ms) dell'orario [minOfDay] non successiva a [now]. */
+private fun lastOccurrenceMs(minOfDay: Int, now: Long, tz: java.util.TimeZone): Long {
+    val cal = java.util.Calendar.getInstance(tz).apply {
+        timeInMillis = now
+        set(java.util.Calendar.HOUR_OF_DAY, minOfDay / 60)
+        set(java.util.Calendar.MINUTE, minOfDay % 60)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    if (cal.timeInMillis > now) cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+    return cal.timeInMillis
+}
+
 /** Server LAN: dashboard consultabile dal PC mentre il telefono registra. */
 @Serializable
 data class LanCfg(

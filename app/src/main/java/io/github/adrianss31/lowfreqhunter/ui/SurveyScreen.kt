@@ -249,9 +249,13 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var heat by remember { mutableStateOf<HeatmapRender.Result?>(null) }
 
-    // ── zoom con le dita sulla mappa (pinch + pan, doppio tap = tutta) ──────
+    // ── zoom con le dita sulla mappa (pinch + pan) ──────────────────────────
     var mapScale by remember(surveyId) { mutableStateOf(1f) }
     var mapPan by remember(surveyId) { mutableStateOf(Offset.Zero) }
+
+    // punto candidato (normalizzato 0..1): il tap lo piazza, il trascinamento
+    // lo rifinisce, il bottone MISURA conferma — niente più dito grosso
+    var pending by remember(surveyId) { mutableStateOf<Offset?>(null) }
 
     fun clampPan(pan: Offset, scale: Float): Offset = Offset(
         pan.x.coerceIn(mapSize.width * (1f - scale), 0f),
@@ -367,7 +371,7 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(s.name, color = Lfh.Text, fontSize = 15.sp, fontFamily = MonoFont)
-                CapsLabel("${points.size} punti · tocca dove sei per misurare", color = Lfh.TextFaint)
+                CapsLabel("${points.size} punti · tocca ≈ dove sei, rifinisci e premi misura", color = Lfh.TextFaint)
             }
             HwButton("← mappe") { cancelSampling(); onBack() }
         }
@@ -395,6 +399,8 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
                 .background(Lfh.Bg)
                 .onSizeChanged { mapSize = it }
                 .clipToBounds()
+                // niente onDoubleTap: costringerebbe ogni tap ad aspettare il
+                // timeout del doppio tap (~300 ms) — il tap deve essere immediato
                 .pointerInput(points, mapSize) {
                     detectTapGestures(
                         onTap = { off ->
@@ -404,38 +410,54 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
                             } else if (size.width > 0 &&
                                 c.x in 0f..size.width.toFloat() && c.y in 0f..size.height.toFloat()
                             ) {
-                                startSampling(c.x / size.width, c.y / size.height)
+                                Haptics.tap(view)
+                                pending = Offset(c.x / size.width, c.y / size.height)
                             }
-                        },
-                        onDoubleTap = {
-                            mapScale = 1f
-                            mapPan = Offset.Zero
                         },
                         onLongPress = { off -> deleteNearest(toContent(off)) },
                     )
                 }
-                // pinch per zoomare (fino a 6×); a mappa ingrandita un dito
-                // trascina la vista, il doppio tap torna alla vista intera
+                // pinch per zoomare (fino a 6×); con un mirino piazzato un dito
+                // lo rifinisce (movimento relativo, il dito può stare ovunque);
+                // senza mirino e da zoomati un dito trascina la vista
                 .pointerInput(mapSize) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         do {
                             val event = awaitPointerEvent()
                             val pressed = event.changes.count { it.pressed }
-                            if (pressed > 1 || (mapScale > 1f && pressed == 1)) {
-                                val zoom = event.calculateZoom()
-                                val pan = event.calculatePan()
-                                val centroid = event.calculateCentroid()
-                                val newScale = (mapScale * zoom).coerceIn(1f, 6f)
-                                var newPan = mapPan
-                                if (newScale != mapScale && centroid.isSpecified) {
-                                    // zoom centrato sul punto tra le dita
-                                    newPan = (newPan - centroid) * (newScale / mapScale) + centroid
+                            val pan = event.calculatePan()
+                            when {
+                                pressed > 1 -> {
+                                    val zoom = event.calculateZoom()
+                                    val centroid = event.calculateCentroid()
+                                    val newScale = (mapScale * zoom).coerceIn(1f, 6f)
+                                    var newPan = mapPan
+                                    if (newScale != mapScale && centroid.isSpecified) {
+                                        // zoom centrato sul punto tra le dita
+                                        newPan = (newPan - centroid) * (newScale / mapScale) + centroid
+                                    }
+                                    newPan += pan
+                                    mapScale = newScale
+                                    mapPan = clampPan(newPan, newScale)
+                                    if (zoom != 1f || pan != Offset.Zero) {
+                                        event.changes.forEach { it.consume() }
+                                    }
                                 }
-                                newPan += pan
-                                mapScale = newScale
-                                mapPan = clampPan(newPan, newScale)
-                                if (zoom != 1f || pan != Offset.Zero) {
+                                pressed == 1 && pending != null && samplingJob.value == null &&
+                                    pan != Offset.Zero && mapSize.width > 0 -> {
+                                    // rifinitura del mirino: delta diviso per lo
+                                    // zoom = controllo fine quando ingranditi
+                                    pending = pending?.let {
+                                        Offset(
+                                            (it.x + pan.x / mapScale / mapSize.width).coerceIn(0f, 1f),
+                                            (it.y + pan.y / mapScale / mapSize.height).coerceIn(0f, 1f),
+                                        )
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                }
+                                pressed == 1 && mapScale > 1f && pan != Offset.Zero -> {
+                                    mapPan = clampPan(mapPan + pan, mapScale)
                                     event.changes.forEach { it.consume() }
                                 }
                             }
@@ -500,18 +522,63 @@ private fun SurveyDetail(surveyId: String, onBack: () -> Unit) {
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
                     )
                 }
+                // mirino del punto candidato (linee sottili anche da zoomati)
+                if (sampling == null) {
+                    pending?.let { p ->
+                        val c = Offset(p.x * size.width, p.y * size.height)
+                        val s = 1f / mapScale
+                        val arm = 14.dp.toPx() * s
+                        val gap = 4.dp.toPx() * s
+                        val w = 1.5f.dp.toPx() * s
+                        drawCircle(Lfh.Amber.copy(alpha = 0.2f), radius = 10.dp.toPx() * s, center = c)
+                        drawCircle(Lfh.Amber, radius = 2.dp.toPx() * s, center = c)
+                        for ((dx, dy) in listOf(Pair(1f, 0f), Pair(-1f, 0f), Pair(0f, 1f), Pair(0f, -1f))) {
+                            drawLine(
+                                Lfh.Amber,
+                                Offset(c.x + dx * gap, c.y + dy * gap),
+                                Offset(c.x + dx * arm, c.y + dy * arm),
+                                strokeWidth = w,
+                            )
+                        }
+                    }
+                }
             }
             }
             if (mapScale > 1f) {
-                CapsLabel(
-                    "${"%.1f".format(mapScale)}× · doppio tap = tutta",
+                Row(
                     Modifier
                         .align(Alignment.TopEnd)
                         .background(Lfh.Bg.copy(alpha = 0.75f))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    color = Lfh.Accent,
-                )
+                        .padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CapsLabel("${"%.1f".format(mapScale)}×", color = Lfh.Accent)
+                    Spacer(Modifier.width(8.dp))
+                    HwButton("1×") {
+                        mapScale = 1f
+                        mapPan = Offset.Zero
+                    }
+                }
             }
+        }
+
+        // conferma del punto candidato: rifinisci trascinando, poi misura
+        val pendingNow = pending
+        if (pendingNow != null && sampling == null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HwButton("✕ annulla") { pending = null }
+                HwButton(
+                    "● misura qui ($DWELL_S s)", Modifier.weight(1f),
+                    color = Lfh.Bg, bg = Lfh.Amber, borderColor = Lfh.Amber, heavy = true,
+                ) {
+                    pending = null
+                    startSampling(pendingNow.x, pendingNow.y)
+                }
+            }
+            CapsLabel(
+                "trascina col dito (anche lontano dal mirino) per rifinire la posizione",
+                color = Lfh.TextFaint,
+            )
         }
 
         // stato: countdown o livello live del canale selezionato

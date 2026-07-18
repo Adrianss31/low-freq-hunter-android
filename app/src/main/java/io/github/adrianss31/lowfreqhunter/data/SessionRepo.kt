@@ -30,17 +30,21 @@ class SessionRecorder(
     binHz: Double,
     audioSource: String,
     labelPrefix: String = "Notte",
+    resume: SessionEntity? = null,
 ) : NightEngine.Sink {
 
-    val sessionId: String = UUID.randomUUID().toString()
-    val startedAt: Long = System.currentTimeMillis()
+    private val resumedAt = System.currentTimeMillis()
+
+    /** Se [resume] è valorizzata, la registrazione PROSEGUE quella sessione. */
+    val sessionId: String = resume?.id ?: UUID.randomUUID().toString()
+    val startedAt: Long = resume?.startedAt ?: resumedAt
 
     private val json = Json { encodeDefaults = true }
     private val writes = Channel<suspend () -> Unit>(capacity = Channel.UNLIMITED)
     private val sampleBuf = ArrayList<SampleEntity>()
     private var lastFlushMs = System.currentTimeMillis()
 
-    private var session = SessionEntity(
+    private var session = resume?.copy(endedAt = null) ?: SessionEntity(
         id = sessionId,
         label = "$labelPrefix " + SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.ITALIAN).format(Date(startedAt)),
         startedAt = startedAt,
@@ -52,7 +56,7 @@ class SessionRecorder(
         audioSource = audioSource,
     )
 
-    private val _eventsCount = MutableStateFlow(0)
+    private val _eventsCount = MutableStateFlow(resume?.eventsCount ?: 0)
     val eventsCount: StateFlow<Int> = _eventsCount
     private val _lastEvent = MutableStateFlow<EventData?>(null)
     val lastEvent: StateFlow<EventData?> = _lastEvent
@@ -64,6 +68,20 @@ class SessionRecorder(
             }
         }
         enqueue { dao.upsertSession(session) }
+        // il buco tra lo stop e la ripresa resta documentato come gap
+        if (resume != null && resumedAt / 1000 - resume.lastT > 5) {
+            val gap = EventEntity(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                band = Channels.GAP,
+                startT = resume.lastT,
+                endT = resumedAt / 1000,
+                durationS = resumedAt / 1000 - resume.lastT,
+                peakDb = null,
+                avgDb = null,
+            )
+            enqueue { dao.insertEvent(gap) }
+        }
     }
 
     private fun enqueue(op: suspend () -> Unit) {
@@ -152,9 +170,13 @@ class SessionRecorder(
     }
 }
 
-/** Sessioni rimaste aperte (crash/batteria): chiuse all'orario dell'ultimo campione. */
-suspend fun recoverInterrupted(dao: LfhDao): Int {
-    val open = dao.openSessions()
+/**
+ * Sessioni rimaste aperte (crash/batteria): chiuse all'orario dell'ultimo
+ * campione. [activeId] è la sessione attualmente in registrazione, da NON
+ * chiudere (la ripresa automatica può averla riaperta prima del recovery).
+ */
+suspend fun recoverInterrupted(dao: LfhDao, activeId: String? = null): Int {
+    val open = dao.openSessions().filter { it.id != activeId }
     for (s in open) {
         dao.upsertSession(s.copy(endedAt = s.lastT * 1000, recovered = true))
     }

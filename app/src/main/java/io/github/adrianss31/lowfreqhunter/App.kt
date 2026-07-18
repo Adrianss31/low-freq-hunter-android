@@ -21,7 +21,11 @@ class App : Application() {
 
         // Sessioni rimaste aperte (crash/batteria): chiuse all'ultimo campione
         scope.launch {
-            runCatching { recoverInterrupted(LfhDb.get(this@App).dao()) }
+            runCatching {
+                val active = io.github.adrianss31.lowfreqhunter.service.MonitorBus.state.value
+                    .takeIf { it.running }?.sessionId
+                recoverInterrupted(LfhDb.get(this@App).dao(), active)
+            }
         }
 
         // Ogni modifica alla programmazione riprogramma gli allarmi

@@ -1,6 +1,9 @@
 package io.github.adrianss31.lowfreqhunter
 
+import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.ContinuousCfg
+import io.github.adrianss31.lowfreqhunter.data.ScheduleCfg
+import io.github.adrianss31.lowfreqhunter.data.windowStartMs
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.EventData
 import io.github.adrianss31.lowfreqhunter.engine.Recurrence
@@ -93,6 +96,32 @@ class ContinuousTest {
         assertEquals(0.5f, Recurrence.lvlScale(0f), 0.001f) // soglia = centro
         assertEquals(1f, Recurrence.lvlScale(10f), 0f)
         assertEquals(1f, Recurrence.lvlScale(25f), 0f)      // satura
+    }
+
+    @Test
+    fun finestraCorrente_conDueSpezzamenti() {
+        val utc = TimeZone.getTimeZone("UTC")
+        val s = AppSettings(
+            continuous = ContinuousCfg(enabled = true, splitMin = 21 * 60, split2Enabled = true, split2Min = 7 * 60),
+        )
+        val day3 = 3L * 86400_000
+        // alle 23:00 la finestra corrente è iniziata alle 21:00 di oggi
+        assertEquals(day3 + 21 * 3600_000, s.windowStartMs(day3 + 23 * 3600_000, utc))
+        // alle 03:00 la finestra (notturna) è iniziata alle 21:00 di ieri
+        assertEquals(day3 - 3 * 3600_000, s.windowStartMs(day3 + 3 * 3600_000, utc))
+        // alle 12:00 la finestra (diurna) è iniziata alle 07:00 di oggi
+        assertEquals(day3 + 7 * 3600_000, s.windowStartMs(day3 + 12 * 3600_000, utc))
+    }
+
+    @Test
+    fun finestraCorrente_programmazioneEMezzanotte() {
+        val utc = TimeZone.getTimeZone("UTC")
+        val day3 = 3L * 86400_000
+        // programmazione 23–7: alle 12:00 la finestra è iniziata alle 07:00
+        val sched = AppSettings(schedule = ScheduleCfg(enabled = true, startMin = 23 * 60, endMin = 7 * 60))
+        assertEquals(day3 + 7 * 3600_000, sched.windowStartMs(day3 + 12 * 3600_000, utc))
+        // nessuna programmazione: la finestra è il giorno solare
+        assertEquals(day3, AppSettings().windowStartMs(day3 + 12 * 3600_000, utc))
     }
 
     @Test
