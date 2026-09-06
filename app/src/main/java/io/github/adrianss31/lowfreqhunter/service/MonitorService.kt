@@ -22,6 +22,7 @@ import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.SessionRecorder
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.data.windowStartMs
+import io.github.adrianss31.lowfreqhunter.data.validate
 import io.github.adrianss31.lowfreqhunter.dsp.Bands
 import io.github.adrianss31.lowfreqhunter.dsp.Ema
 import io.github.adrianss31.lowfreqhunter.dsp.MovingMedian
@@ -42,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -82,6 +84,7 @@ class MonitorService : Service() {
         }
     }
 
+    private val chainLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var capture: CaptureEngine? = null
 
@@ -95,11 +98,12 @@ class MonitorService : Service() {
     private var contCfg: io.github.adrianss31.lowfreqhunter.data.ContinuousCfg =
         io.github.adrianss31.lowfreqhunter.data.ContinuousCfg()
     private var nextSplitMs = 0L
-    private var running = false
+    @Volatile private var running = false
     private var listenMode = false
     private var evCount = 0
     private var clipCount = 0
     private var clipWriter: ClipWriter? = null
+    private var finalizing = false
     private var lanServer: LanServer? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
@@ -139,9 +143,9 @@ class MonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startMonitoring(listenOnly = false)
-            ACTION_START_LISTEN -> startMonitoring(listenOnly = true)
-            ACTION_STOP -> stopMonitoring()
+            ACTION_START -> runCatching { startMonitoring(listenOnly = false) }.onFailure { failStart(it) }
+            ACTION_START_LISTEN -> runCatching { startMonitoring(listenOnly = true) }.onFailure { failStart(it) }
+            ACTION_STOP -> scope.launch { stopMonitoring() }
             // REDELIVER: dopo un kill il sistema riconsegna l'ultimo intent,
             // quindi si riparte nella stessa modalità (rec O solo ascolto —
             // con STICKY l'intent tornava null e un "solo ascolto" ucciso
@@ -152,8 +156,15 @@ class MonitorService : Service() {
         return START_REDELIVER_INTENT
     }
 
-    private fun startMonitoring(listenOnly: Boolean) {
+    private fun failStart(error: Throwable) {
+        MonitorBus.error.value = "Avvio non riuscito: ${error.message}"
+        stopMonitoring()
+    }
+
+    private fun startMonitoring(listenOnly: Boolean): Unit = synchronized(chainLock) {
         if (running) return
+        MonitorBus.error.value = null
+        runBlocking { (application as io.github.adrianss31.lowfreqhunter.App).recovery.join() }
         running = true
         listenMode = listenOnly
         evCount = 0
@@ -164,6 +175,7 @@ class MonitorService : Service() {
         uiDom.reset()
 
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
+        settings.validate()
         cfg = settings.engine
         contCfg = settings.continuous
         nextSplitMs = if (contCfg.enabled && !listenOnly) nextSplitAfter(System.currentTimeMillis()) else 0L
@@ -193,7 +205,7 @@ class MonitorService : Service() {
             // stessa finestra giorno/notte e stessa cfg → si prosegue la
             // sessione esistente invece di crearne una nuova
             val resume = findResumable(dao, settings)
-            SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), resume)
+            SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), resume, Json.encodeToString(settings.context), deviceMetadata())
         }
         recorder = rec
         evCount = rec?.eventsCount?.value ?: 0
@@ -234,6 +246,7 @@ class MonitorService : Service() {
         eng.start(System.currentTimeMillis())
 
         if (!startCapture(cap)) {
+            MonitorBus.error.value = "Microfono non disponibile: registrazione non avviata."
             stopMonitoring()
             return
         }
@@ -249,18 +262,22 @@ class MonitorService : Service() {
         // documentato come gap dal NightEngine.
         scope.launch {
             while (running) {
-                engine?.batteryPct = readBattery()
-                wakeLock?.acquire(WAKELOCK_TIMEOUT_MS) // rinnovo (ref counting off)
-                if (nextSplitMs > 0 && System.currentTimeMillis() >= nextSplitMs) rollover()
-                val c = capture
-                if (c != null && System.currentTimeMillis() - c.lastDataMs > 20_000) {
-                    c.stop()
-                    val fresh = CaptureEngine(this@MonitorService, cfg.fftSize, cfg.smoothNight)
-                    capture = fresh
-                    startCapture(fresh)
+                synchronized(chainLock) {
+                    if (!running) return@launch
+                    engine?.batteryPct = readBattery()
+                    wakeLock?.acquire(WAKELOCK_TIMEOUT_MS) // rinnovo (ref counting off)
+                    if (nextSplitMs > 0 && System.currentTimeMillis() >= nextSplitMs) rollover()
+                    val c = capture
+                    if (c != null && System.currentTimeMillis() - c.lastDataMs > 20_000) {
+                        MonitorBus.error.value = "Microfono in stallo: tentativo di ripristino. Il buco viene registrato."
+                        c.stop()
+                        val fresh = CaptureEngine(this@MonitorService, cfg.fftSize, cfg.smoothNight)
+                        capture = fresh
+                        startCapture(fresh)
+                    }
                 }
                 updateNotification()
-                delay(60_000)
+                delay(5_000)
             }
         }
 
@@ -277,35 +294,41 @@ class MonitorService : Service() {
         }
     }
 
-    private fun startCapture(cap: CaptureEngine): Boolean =
-        cap.start(scope) { spec, binHz, nowMs ->
-            // dal campo, non catturato: il rollover sostituisce il motore
-            engine?.let { eng ->
-                eng.processSpectrum(spec, binHz, nowMs)
-                publishLive(spec, binHz, nowMs, eng)
+    private fun startCapture(cap: CaptureEngine): Boolean {
+        cap.onError = { MonitorBus.error.value = it }
+        return cap.start(scope) { spec, binHz, nowMs ->
+            synchronized(chainLock) {
+                if (!running || capture !== cap) return@start
+                // dal campo, non catturato: il rollover sostituisce il motore
+                engine?.let { eng ->
+                    eng.processSpectrum(spec, binHz, nowMs)
+                    publishLive(spec, binHz, nowMs, eng)
+                }
             }
         }
+    }
 
     /**
      * Rollover della registrazione continua: chiude sessione e motore e ne
      * apre di nuovi nello stesso istante, senza fermare la cattura. Gli
      * eventi ancora aperti vengono finalizzati nella sessione che si chiude.
      */
-    private fun rollover() {
+    private fun rollover() = synchronized(chainLock) {
+        if (!running) return
         val cap = capture ?: return
         val now = System.currentTimeMillis()
         nextSplitMs = nextSplitAfter(now)
         capture?.pcmTap = null
         clipWriter?.let { runCatching { it.close() } }
         clipWriter = null
-        engine?.stop(now)
-        recorder?.close()
+        finishEngine(now)
+        finishRecorder()
 
         evCount = 0
         clipCount = 0
         uiDom.reset()
         val dao = LfhDb.get(this).dao()
-        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
+        val rec = SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), contextJson = currentContext(), deviceJson = deviceMetadata())
         recorder = rec
         MonitorBus.resetSession()
         MonitorBus.state.value = MonitorBus.state.value.copy(
@@ -329,19 +352,18 @@ class MonitorService : Service() {
      * fermare il foreground service né il server LAN.
      * Ritorna true se la sessione è stata riavviata.
      */
-    fun applySettingsNow(): Boolean {
+    fun applySettingsNow(): Boolean = synchronized(chainLock) {
         if (!running) return false
         val settings = runBlocking { SettingsRepo.get(this@MonitorService).flow.first() }
         contCfg = settings.continuous
         nextSplitMs = if (contCfg.enabled && !listenMode) nextSplitAfter(System.currentTimeMillis()) else 0L
         if (settings.engine == cfg) return false
-        val newCfg = settings.engine
-        scope.launch { restartChain(newCfg) }
+        scope.launch { restartChain(SettingsRepo.get(this@MonitorService).flow.first().engine) }
         return true
     }
 
     /** Riavvio a caldo della catena di analisi con una nuova [newCfg]. */
-    private fun restartChain(newCfg: EngineCfg) {
+    private fun restartChain(newCfg: EngineCfg) = synchronized(chainLock) {
         if (!running) return
         val now = System.currentTimeMillis()
         capture?.pcmTap = null
@@ -350,8 +372,8 @@ class MonitorService : Service() {
         capture?.stop()
         vib?.stop()
         vib = null
-        engine?.stop(now)
-        recorder?.close()
+        finishEngine(now)
+        finishRecorder()
 
         cfg = newCfg
         evCount = 0
@@ -364,7 +386,7 @@ class MonitorService : Service() {
         val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
         capture = cap
         val dao = LfhDb.get(this).dao()
-        val rec = if (listenMode) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix())
+        val rec = if (listenMode) null else SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), contextJson = currentContext(), deviceJson = deviceMetadata())
         recorder = rec
         MonitorBus.resetSession()
         MonitorBus.state.value = MonitorBus.state.value.copy(
@@ -382,7 +404,10 @@ class MonitorService : Service() {
             val v = VibrationEngine(this)
             if (v.start({ db -> engine?.vibDb = db })) vib = v
         }
-        startCapture(cap)
+        if (!startCapture(cap)) {
+            MonitorBus.error.value = "Microfono non disponibile dopo il cambio impostazioni."
+            stopMonitoring()
+        }
         updateNotification()
     }
 
@@ -412,7 +437,7 @@ class MonitorService : Service() {
         val snap = runCatching {
             Json { ignoreUnknownKeys = true }.decodeFromString<EngineCfg>(last.cfgJson)
         }.getOrNull()
-        return if (snap == cfg) last else null
+        return if (snap == cfg && last.contextJson == Json.encodeToString(settings.context) && last.deviceJson == deviceMetadata()) last else null
     }
 
     /** Etichetta della nuova sessione (Notte/Giorno) con due spezzamenti. */
@@ -452,9 +477,33 @@ class MonitorService : Service() {
         MonitorBus.spectrum.value = MonitorBus.SpectrumFrame(spec.copyOf(maxBins), binHz, nowMs)
     }
 
+    private fun currentContext(): String = runBlocking {
+        Json.encodeToString(SettingsRepo.get(this@MonitorService).flow.first().context)
+    }
+
+    private fun deviceMetadata(): String = Json.encodeToString(mapOf(
+        "manufacturer" to Build.MANUFACTURER, "model" to Build.MODEL,
+        "android" to Build.VERSION.RELEASE, "timezone" to java.util.TimeZone.getDefault().id,
+        "app_version" to packageManager.getPackageInfo(packageName, 0).versionName.orEmpty(),
+    ))
+
+    private fun finishEngine(now: Long) {
+        finalizing = true
+        try { engine?.stop(now) } finally { finalizing = false }
+    }
+
+    private fun finishRecorder() {
+        recorder?.let { rec ->
+            runCatching { runBlocking { rec.closeAndJoin() } }.onFailure {
+                MonitorBus.error.value = "Salvataggio incompleto: ${it.message}"
+            }
+        }
+        recorder = null
+    }
+
     // ── Clip WAV sugli eventi ───────────────────────────────────────────────
     private fun maybeStartClip(band: String, startT: Long) {
-        if (!cfg.clipsEnabled || band == Channels.VIB) return
+        if (!running || finalizing || !cfg.clipsEnabled || band == Channels.VIB) return
         if (clipWriter != null || clipCount >= cfg.clipsMax) return
         val rec = recorder ?: return
         val cap = capture ?: return
@@ -462,24 +511,29 @@ class MonitorService : Service() {
         val file = File(dir, "${rec.sessionId}_${band}_$startT.wav")
         val writer = ClipWriter(file, cap.actualSampleRate, cfg.clipSeconds)
         runCatching { writer.open() }.onFailure { return }
+        rec.addClip(band, startT, file.absolutePath, "audio/wav")
         clipWriter = writer
         clipCount++
         cap.pcmTap = { pcm, n -> writer.append(pcm, n) }
         scope.launch {
             delay(cfg.clipSeconds * 1000L)
-            cap.pcmTap = null
-            runCatching { writer.close() }
-            if (writer === clipWriter) clipWriter = null
-            rec.addClip(band, startT, file.absolutePath, "audio/wav")
+            synchronized(chainLock) {
+                if (writer === clipWriter) {
+                    cap.pcmTap = null
+                    runCatching { writer.close() }
+                    clipWriter = null
+                }
+            }
         }
     }
 
-    fun addMarker(origin: String) {
+    fun addMarker(origin: String) = synchronized(chainLock) {
         val t = recorder?.addMarker(origin) ?: return
         MonitorBus.markers.value = MonitorBus.markers.value + t
+        if (origin.startsWith("nota: ")) MonitorBus.notes.value = (MonitorBus.notes.value + (t to origin.removePrefix("nota: "))).takeLast(10)
     }
 
-    private fun stopMonitoring() {
+    private fun stopMonitoring() = synchronized(chainLock) {
         if (!running) {
             stopSelf()
             return
@@ -491,10 +545,10 @@ class MonitorService : Service() {
         lanServer = null
         wifiLock?.release()
         wifiLock = null
-        engine?.stop(System.currentTimeMillis())
+        finishEngine(System.currentTimeMillis())
         clipWriter?.let { runCatching { it.close() } }
         clipWriter = null
-        recorder?.close()
+        finishRecorder()
         MonitorBus.state.value = MonitorBus.state.value.copy(running = false, mode = "", activeBands = emptyMap(), lanUrl = null)
         wakeLock?.release()
         wakeLock = null
@@ -525,6 +579,7 @@ class MonitorService : Service() {
     private fun notificationText(): String {
         val st = MonitorBus.state.value
         val lines = StringBuilder()
+        MonitorBus.error.value?.let { lines.append(it).append("\n") }
         val evs = MonitorBus.events.value.filter { it.band != Channels.GAP }
         if (evs.isEmpty()) {
             lines.append("Nessun rumore oltre la soglia.")

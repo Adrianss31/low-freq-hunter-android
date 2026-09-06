@@ -49,8 +49,9 @@ informativa.
 
 ## Build
 
-Solo via GitHub Actions (`.github/workflows/build.yml`): JDK 17,
-gradle 8.10.2, firma con keystore dai secrets `KEYSTORE_BASE64` /
+Build locale con JDK 17, SDK Android 35 e `./gradlew testReleaseUnitTest assembleRelease`.
+Il wrapper include il checksum della distribuzione Gradle 8.10.2.
+GitHub Actions (`.github/workflows/build.yml`) esegue i test e la firma con keystore dai secrets `KEYSTORE_BASE64` /
 `KEYSTORE_PASSWORD` (alias `lowfreqhunter`; i file locali stanno in `.keys/`,
 mai committati). Ogni push su `main` produce l'APK come artifact; i tag `v*`
 pubblicano una release con `lowfreqhunter.apk` allegato.
@@ -67,3 +68,55 @@ notifiche; per il log notturno consigliata l'esenzione batteria (Setup).
 
 I livelli sono dBFS relativi al fondo scala del microfono, non dB SPL
 calibrati: misura indicativa, non fonometria certificata.
+
+
+## Dossier per LLM
+
+In **Notte**, prima di registrare, salva stanza, posizione/orientamento e condizioni
+(finestre, impianti). Il contesto e il dispositivo vengono fotografati nella nuova
+sessione; le sessioni precedenti mantengono i propri metadati, o "sconosciuto".
+Durante REC puoi aggiungere note e azioni con orario, ad esempio "spento climatizzatore".
+
+In **Log → dossier per LLM** seleziona da 1 a 31 sessioni concluse e crea lo ZIP.
+La condivisione Android permette di salvarlo o caricarlo nella chat scelta. L'app
+non invia dati a servizi AI. Campioni al secondo e audio sono opzioni separate,
+entrambe disattivate all'inizio; con audio vengono incluse le prime tre clip di
+ogni sessione (se disponibili e <=12 MB), non una selezione esaustiva dei fenomeni.
+
+Il pacchetto contiene istruzioni per l'analisi, riepilogo JSON con configurazione,
+metadati e copertura, andamento per minuto, eventi e gap con identificativi,
+annotazioni, ricorrenze orarie, PNG e spettrogrammi numerici. La media è energetica;
+i massimi sono dei campioni al secondo; il percentile 10 è solo un indicatore del
+fondo. I minuti senza dati rimangono vuoti. Canale V e audio hanno unità diverse.
+I gruppi di confronto includono configurazione, dispositivo, sorgente e contesto:
+una stessa frequenza non implica una stessa sorgente fisica.
+
+## Aggiornamenti dall'app
+
+All'apertura viene controllata l'ultima release stabile del repository GitHub;
+in **Setup → Aggiornamenti** puoi ripetere il controllo. **Aggiorna** scarica
+`lowfreqhunter.apk` in cache e apre la conferma d'installazione di Android.
+Alla prima installazione Android può richiedere "Consenti da questa origine";
+al ritorno l'app prosegue con l'installazione. Se annulli puoi riprovare.
+Termina prima una registrazione: l'app non avvia l'installer durante REC/ascolto.
+
+Il download usa HTTPS, controlla dimensione, digest GitHub quando presente,
+package name, versionCode crescente e corrispondenza dei firmatari con l'app
+installata. Le release devono continuare a usare il medesimo keystore; una
+build debug non può aggiornare un'installazione release. Le prerelease sono escluse.
+Per ottenere questa funzione chi usa una versione precedente deve installare
+manualmente **una prima release che la contenga**. Le successive saranno aggiornabili
+dall'app. Il workflow impedisce di pubblicare un tag senza chiavi di firma.
+
+## Verifica e limiti
+
+`./gradlew testReleaseUnitTest assembleRelease lintDebug` esegue i test e i
+controlli Android. Le pull request eseguono anche test e build debug senza secrets.
+Le verifiche includono drenaggio scritture Room allo stop, dati di un dossier ZIP,
+statistiche energetiche, picco iniziale degli eventi, gap finale, WAV parziale,
+migrazione dei metadati e rifiuto di APK con firma/versione/package incompatibili.
+
+Restano necessarie prove su dispositivo per registrazione notturna prolungata,
+Doze, permessi OEM, avvio programmato e conferma dell'installer. I test JVM non
+simulano la risposta fisica del microfono. Le statistiche già salvate da vecchie
+versioni non vengono riscritte retroattivamente.

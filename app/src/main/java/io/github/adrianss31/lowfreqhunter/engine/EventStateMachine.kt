@@ -26,6 +26,13 @@ class EventStateMachine(val band: String) {
     private var peak = Double.NEGATIVE_INFINITY
     private var pSum = 0.0
     private var pN = 0
+    private val falling = ArrayList<Double>()
+
+    private fun accumulate(level: Double) {
+        peak = maxOf(peak, level)
+        pSum += 10.0.pow(level / 10.0)
+        pN++
+    }
 
     /** Inizio dell'evento in corso, o null se non attivo. */
     val activeSince: Long? get() = if (state == State.ACTIVE || state == State.FALLING) evStart else null
@@ -51,35 +58,41 @@ class EventStateMachine(val band: String) {
                 if (level >= thrOn) {
                     state = State.RISING
                     riseT = t
+                    peak = Double.NEGATIVE_INFINITY
+                    pSum = 0.0
+                    pN = 0
+                    falling.clear()
+                    accumulate(level)
                 }
             }
             State.RISING -> {
                 if (level < thrOff) {
                     state = State.IDLE
-                } else if (t - riseT >= minOnS) {
-                    state = State.ACTIVE
-                    evStart = riseT
-                    peak = level
-                    pSum = 10.0.pow(level / 10.0)
-                    pN = 1
-                    onStart(band, riseT)
+                } else {
+                    accumulate(level)
+                    if (t - riseT >= minOnS) {
+                        state = State.ACTIVE
+                        evStart = riseT
+                        onStart(band, riseT)
+                    }
                 }
             }
             State.ACTIVE -> {
-                if (level > peak) peak = level
-                pSum += 10.0.pow(level / 10.0)
-                pN++
                 if (level < thrOff) {
                     state = State.FALLING
                     fallT = t
-                }
+                    falling.add(level)
+                } else accumulate(level)
             }
             State.FALLING -> {
                 if (level >= thrOff) {
+                    falling.forEach(::accumulate)
+                    falling.clear()
+                    accumulate(level)
                     state = State.ACTIVE
                 } else if (t - fallT >= minOffS) {
                     return close(fallT)
-                }
+                } else falling.add(level)
             }
         }
         return null
@@ -88,7 +101,7 @@ class EventStateMachine(val band: String) {
     /** Chiude forzatamente l'evento in corso (stop sessione o gap). */
     fun forceClose(endT: Long): EventData? {
         return if (evStart != null && (state == State.ACTIVE || state == State.FALLING)) {
-            close(endT)
+            close(if (state == State.FALLING) fallT else endT)
         } else {
             reset()
             null
@@ -101,6 +114,7 @@ class EventStateMachine(val band: String) {
         peak = Double.NEGATIVE_INFINITY
         pSum = 0.0
         pN = 0
+        falling.clear()
     }
 
     private fun close(endT: Long): EventData {

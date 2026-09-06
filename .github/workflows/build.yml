@@ -29,7 +29,11 @@ jobs:
           gradle-version: "8.10.2"
 
       - name: Unit test
-        run: gradle testReleaseUnitTest
+        run: ./gradlew testReleaseUnitTest
+
+      - name: Richiedi firma per le release
+        if: github.ref_type == 'tag'
+        run: test -n "$KEYSTORE_BASE64" && test -n "$KEYSTORE_PASSWORD"
 
       - name: Decodifica keystore
         if: env.KEYSTORE_BASE64 != ''
@@ -45,7 +49,7 @@ jobs:
             export KEY_ALIAS=lowfreqhunter
             export KEY_PASSWORD="$KEYSTORE_PASSWORD"
           fi
-          gradle assembleRelease
+          ./gradlew assembleRelease
 
       - name: Prepara APK
         run: cp app/build/outputs/apk/release/app-release*.apk lowfreqhunter.apk

@@ -27,6 +27,7 @@ class ClipWriter(private val file: File, private val sampleRate: Int, private va
         written = 0
     }
 
+    @Synchronized
     fun append(pcm: FloatArray, n: Int) {
         val f = raf ?: return
         if (written >= maxBytes) return
@@ -40,6 +41,7 @@ class ClipWriter(private val file: File, private val sampleRate: Int, private va
         written += count * 2
     }
 
+    @Synchronized
     fun close() {
         val f = raf ?: return
         raf = null

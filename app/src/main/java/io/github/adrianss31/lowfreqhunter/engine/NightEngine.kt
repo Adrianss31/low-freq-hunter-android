@@ -101,6 +101,7 @@ class NightEngine(
 
         // Gap di monitoraggio
         if (lastTickMs != 0L && nowMs - lastTickMs > GAP_S * 1000) {
+            if (secN > 0 && curSec != -1L) finalizeSecond(curSec)
             handleGap(lastTickMs / 1000, nowS)
             curSec = -1L
             secPower.clear()
@@ -228,6 +229,9 @@ class NightEngine(
         for (pd in pulses.values) {
             pd.flush()?.let { sink.onEvent(it) }
         }
+        emitSlice(fromS)
+        lastSliceT = toS
+        domMedian.reset()
         sink.onEvent(EventData(Channels.GAP, fromS, toS, toS - fromS, null, null))
     }
 
@@ -235,6 +239,11 @@ class NightEngine(
     fun stop(nowMs: Long) {
         if (!started) return
         val endS = nowMs / 1000
+        if (lastTickMs != 0L && nowMs - lastTickMs > GAP_S * 1000) {
+            if (secN > 0 && curSec != -1L) finalizeSecond(curSec)
+            secN = 0
+            handleGap(lastTickMs / 1000, endS)
+        }
         if (secN > 0 && curSec != -1L) finalizeSecond(curSec)
         for (sm in sms.values) {
             sm.forceClose(endS)?.let { sink.onEvent(it) }

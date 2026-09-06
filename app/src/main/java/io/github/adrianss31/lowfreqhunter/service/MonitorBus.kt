@@ -27,17 +27,20 @@ object MonitorBus {
 
     class SpectrumFrame(val spec: FloatArray, val binHz: Double, val t: Long)
 
+    val error = MutableStateFlow<String?>(null)
     val state = MutableStateFlow(State())
     val spectrum = MutableStateFlow<SpectrumFrame?>(null)
 
     /** Dati della sessione in corso, per i pannelli della schermata Notte. */
     val slices = MutableStateFlow<List<Pair<Long, ByteArray>>>(emptyList())
     val events = MutableStateFlow<List<EventData>>(emptyList())
+    val notes = MutableStateFlow<List<Pair<Long, String>>>(emptyList())
     val markers = MutableStateFlow<List<Long>>(emptyList())
 
     fun resetSession() {
         slices.value = emptyList()
         events.value = emptyList()
         markers.value = emptyList()
+        notes.value = emptyList()
     }
 }

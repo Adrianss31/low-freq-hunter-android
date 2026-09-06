@@ -60,9 +60,9 @@ fun RecurrencePanel(sessions: List<SessionEntity>, dao: LfhDao, cfg: EngineCfg) 
                     snap?.vib?.let { put(Channels.VIB, it.thr) }
                 }
                 val all = dao.samples(s.id)
-                val step = maxOf(1, all.size / 3000)
+                // Keep every sample: decimation before maxima hides short peaks.
                 val levels = buildList {
-                    for (i in all.indices step step) {
+                    for (i in all.indices) {
                         val smp = all[i]
                         val lv = runCatching {
                             json.decodeFromString<Map<String, Double>>(smp.lvJson)

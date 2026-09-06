@@ -2,6 +2,7 @@ package io.github.adrianss31.lowfreqhunter.server
 
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import io.github.adrianss31.lowfreqhunter.data.validate
 import io.github.adrianss31.lowfreqhunter.data.AppSettings
 import io.github.adrianss31.lowfreqhunter.data.CalibCfg
 import io.github.adrianss31.lowfreqhunter.data.EventEntity
@@ -107,6 +108,7 @@ class LanServer(
         val st = MonitorBus.state.value
         val cfg = cfgProvider()
         return buildJsonObject {
+            MonitorBus.error.value?.let { put("error", it) }
             put("now", System.currentTimeMillis())
             put("running", st.running)
             put("mode", st.mode)
@@ -224,6 +226,9 @@ class LanServer(
         val raw = body["postData"] ?: return text(Response.Status.BAD_REQUEST, "body mancante")
         val incoming = runCatching { jsonCodec.decodeFromString<AppSettings>(raw) }.getOrNull()
             ?: return text(Response.Status.BAD_REQUEST, "JSON impostazioni non valido")
+        try { incoming.validate() } catch (e: IllegalArgumentException) {
+            return text(Response.Status.BAD_REQUEST, e.message ?: "Impostazioni non valide")
+        }
         runBlocking {
             SettingsRepo.get(ctx).update { cur -> incoming.copy(lan = cur.lan) }
         }
@@ -249,9 +254,9 @@ class LanServer(
                     snap?.vib?.let { put(Channels.VIB, it.thr) }
                 }
                 val all = runBlocking { dao.samples(s.id) }
-                val step = maxOf(1, all.size / 3000)
+                // Keep every sample: decimation before maxima hides short peaks.
                 val levels = buildList {
-                    for (i in all.indices step step) {
+                    for (i in all.indices) {
                         val smp = all[i]
                         val lv = runCatching {
                             jsonCodec.decodeFromString<Map<String, Double>>(smp.lvJson)

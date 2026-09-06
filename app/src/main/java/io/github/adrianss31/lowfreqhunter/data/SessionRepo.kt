@@ -10,6 +10,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
@@ -31,6 +34,8 @@ class SessionRecorder(
     audioSource: String,
     labelPrefix: String = "Notte",
     resume: SessionEntity? = null,
+    contextJson: String = "{}",
+    deviceJson: String = "{}",
 ) : NightEngine.Sink {
 
     private val resumedAt = System.currentTimeMillis()
@@ -54,6 +59,8 @@ class SessionRecorder(
         sampleRate = sampleRate,
         binHz = binHz,
         audioSource = audioSource,
+        contextJson = contextJson,
+        deviceJson = deviceJson,
     )
 
     private val _eventsCount = MutableStateFlow(resume?.eventsCount ?: 0)
@@ -61,10 +68,19 @@ class SessionRecorder(
     private val _lastEvent = MutableStateFlow<EventData?>(null)
     val lastEvent: StateFlow<EventData?> = _lastEvent
 
+    private val writerJob: Job
+    @Volatile private var failure: Throwable? = null
+    private var closed = false
+
     init {
-        scope.launch {
+        writerJob = scope.launch(Dispatchers.IO) {
             for (op in writes) {
-                runCatching { op() }
+                try { op() } catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    failure = e
+                    io.github.adrianss31.lowfreqhunter.service.MonitorBus.error.value =
+                        "Errore salvataggio: ${e.message}. La sessione potrebbe essere incompleta."
+                }
             }
         }
         enqueue { dao.upsertSession(session) }
@@ -85,7 +101,7 @@ class SessionRecorder(
     }
 
     private fun enqueue(op: suspend () -> Unit) {
-        writes.trySend(op)
+        check(writes.trySend(op).isSuccess) { "Recorder già chiuso" }
     }
 
     override fun onSample(s: SampleData) {
@@ -164,9 +180,17 @@ class SessionRecorder(
     }
 
     fun close() {
+        if (closed) return
+        closed = true
         session = session.copy(endedAt = System.currentTimeMillis(), eventsCount = _eventsCount.value)
         flush()
         writes.close()
+    }
+
+    suspend fun closeAndJoin() {
+        close()
+        writerJob.join()
+        failure?.let { throw java.io.IOException("Salvataggio incompleto", it) }
     }
 }
 
