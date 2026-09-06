@@ -88,6 +88,7 @@ private fun Root() {
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
+        io.github.adrianss31.lowfreqhunter.ui.UpdatePanel()
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> LiveScreen()

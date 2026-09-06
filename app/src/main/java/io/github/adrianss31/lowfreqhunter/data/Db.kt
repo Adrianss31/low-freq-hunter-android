@@ -28,6 +28,8 @@ data class SessionEntity(
     val eventsCount: Int = 0,
     val markersCount: Int = 0,
     val recovered: Boolean = false,
+    @ColumnInfo(defaultValue = "'{}'") val contextJson: String = "{}",
+    @ColumnInfo(defaultValue = "'{}'") val deviceJson: String = "{}",
 )
 
 @Entity(tableName = "samples", primaryKeys = ["sessionId", "t"])
@@ -221,7 +223,7 @@ interface LfhDao {
         SliceEntity::class, MarkerEntity::class, ClipEntity::class,
         SurveyEntity::class, SurveyPointEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class LfhDb : RoomDatabase() {
@@ -254,12 +256,19 @@ abstract class LfhDb : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN contextJson TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN deviceJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
+
         @Volatile private var instance: LfhDb? = null
 
         fun get(context: Context): LfhDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(context.applicationContext, LfhDb::class.java, "lfh.db")
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

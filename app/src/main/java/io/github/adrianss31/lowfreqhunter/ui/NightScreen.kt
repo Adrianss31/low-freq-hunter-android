@@ -43,6 +43,7 @@ fun NightScreen() {
     val ctx = LocalContext.current
     val settings by SettingsRepo.get(ctx).flow.collectAsState(initial = AppSettings())
     val bus by MonitorBus.state.collectAsState()
+    val error by MonitorBus.error.collectAsState()
     val slices by MonitorBus.slices.collectAsState()
     val events by MonitorBus.events.collectAsState()
     val markers by MonitorBus.markers.collectAsState()
@@ -64,6 +65,7 @@ fun NightScreen() {
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        error?.let { Text(it, color = Lfh.Rec, fontSize = 14.sp) }
         // testata: orologio + REC
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -80,6 +82,8 @@ fun NightScreen() {
                 if (bus.running) MonitorService.stop(ctx) else MonitorService.start(ctx)
             }
         }
+
+        ContextPanel(recording = bus.running && bus.mode == "rec")
 
         if (!bus.running) {
             Panel(Modifier.fillMaxWidth()) {

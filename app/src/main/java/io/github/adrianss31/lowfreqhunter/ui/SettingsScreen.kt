@@ -63,7 +63,7 @@ fun SettingsScreen() {
     val view = LocalView.current
 
     fun upd(transform: (AppSettings) -> AppSettings) {
-        scope.launch { repo.update(transform) }
+        scope.launch { runCatching { repo.update(transform) }.onFailure { android.widget.Toast.makeText(ctx, it.message, android.widget.Toast.LENGTH_LONG).show() } }
     }
 
     fun updEngine(transform: (EngineCfg) -> EngineCfg) {
@@ -87,6 +87,12 @@ fun SettingsScreen() {
             }
         }
 
+        val updateState by io.github.adrianss31.lowfreqhunter.update.AppUpdater.state.collectAsState()
+        Panel(Modifier.fillMaxWidth()) {
+            CapsLabel("Aggiornamenti")
+            Text(updateState.message, color = Lfh.TextDim)
+            HwButton("controlla aggiornamenti") { io.github.adrianss31.lowfreqhunter.update.AppUpdater.check(ctx) }
+        }
         CapsLabel("Bande di frequenza e soglie", color = Lfh.Text)
 
         for (band in settings.engine.bands) {

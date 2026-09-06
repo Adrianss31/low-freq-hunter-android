@@ -16,11 +16,14 @@ class App : Application() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    lateinit var recovery: kotlinx.coroutines.Job
+        private set
+
     override fun onCreate() {
         super.onCreate()
 
-        // Sessioni rimaste aperte (crash/batteria): chiuse all'ultimo campione
-        scope.launch {
+        // Complete recovery before any recorder resumes a session.
+        recovery = scope.launch {
             runCatching {
                 val active = io.github.adrianss31.lowfreqhunter.service.MonitorBus.state.value
                     .takeIf { it.running }?.sessionId

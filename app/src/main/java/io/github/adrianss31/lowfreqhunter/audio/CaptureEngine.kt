@@ -30,6 +30,8 @@ class CaptureEngine(
     @Volatile
     var pcmTap: ((FloatArray, Int) -> Unit)? = null
 
+    @Volatile var onError: ((String) -> Unit)? = null
+
     /** Ultimo istante (epoch ms) in cui il microfono ha consegnato dati:
      *  il watchdog del servizio lo usa per rilevare una cattura in stallo. */
     @Volatile
@@ -105,7 +107,11 @@ class CaptureEngine(
         val rec = createRecord() ?: return false
         stopped = false
         record = rec
-        rec.startRecording()
+        if (runCatching { rec.startRecording(); rec.recordingState == AudioRecord.RECORDSTATE_RECORDING }.getOrDefault(false).not()) {
+            rec.release()
+            record = null
+            return false
+        }
         analyzer.reset()
         lastDataMs = System.currentTimeMillis()
 
@@ -113,17 +119,33 @@ class CaptureEngine(
             val ring = FloatArray(fftSize)
             val chunk = FloatArray(hop)
             var failures = 0
+            var filled = 0
             while (!stopped) {
-                val cur = record ?: break
-                val n = cur.read(chunk, 0, hop, AudioRecord.READ_BLOCKING)
+                val cur = record
+                if (cur == null) {
+                    delay(1000)
+                    val fresh = createRecord() ?: continue
+                    synchronized(lock) {
+                        if (stopped) fresh.release() else {
+                            record = fresh
+                            runCatching { fresh.startRecording() }
+                        }
+                    }
+                    continue
+                }
+                val n = runCatching { cur.read(chunk, 0, hop, AudioRecord.READ_BLOCKING) }.getOrDefault(-1)
+                if (stopped) break
                 if (n <= 0) {
                     // Errore di lettura (mic conteso, driver in errore): non
                     // morire in silenzio con la notifica ancora su REC —
                     // ricrea l'AudioRecord e riprova, con pausa crescente.
                     failures++
+                    ring.fill(0f)
+                    filled = 0
+                    analyzer.reset()
                     synchronized(lock) { if (record === cur) record = null }
                     runCatching { cur.stop() }
-                    cur.release()
+                    runCatching { cur.release() }
                     delay(minOf(failures, 10) * 1000L)
                     if (stopped) break
                     val fresh = createRecord() ?: continue
@@ -139,12 +161,21 @@ class CaptureEngine(
                 }
                 failures = 0
                 lastDataMs = System.currentTimeMillis()
-                pcmTap?.invoke(chunk, n)
+                runCatching { pcmTap?.invoke(chunk, n) }.onFailure {
+                    pcmTap = null
+                    onError?.invoke("Scrittura clip non riuscita: ${it.message}")
+                }
                 // scorri il ring e accoda il nuovo blocco
-                System.arraycopy(ring, n, ring, 0, fftSize - n)
-                System.arraycopy(chunk, 0, ring, fftSize - n, n)
+                val keep = minOf(n, fftSize)
+                System.arraycopy(ring, keep, ring, 0, fftSize - keep)
+                System.arraycopy(chunk, n - keep, ring, fftSize - keep, keep)
+                filled = minOf(fftSize, filled + keep)
+                if (filled < fftSize || stopped) continue
                 val spec = analyzer.process(ring)
-                onSpectrum(spec, analyzer.binHz, System.currentTimeMillis())
+                runCatching { onSpectrum(spec, analyzer.binHz, System.currentTimeMillis()) }.onFailure {
+                    onError?.invoke("Analisi interrotta: ${it.message}")
+                    stopped = true
+                }
             }
         }
         return true

@@ -105,8 +105,16 @@ data class CalibCfg(
 )
 
 @Serializable
+data class MeasurementContext(
+    val room: String = "",
+    val position: String = "",
+    val conditions: String = "",
+)
+
+@Serializable
 data class AppSettings(
     val engine: EngineCfg = EngineCfg(),
+    val context: MeasurementContext = MeasurementContext(),
     val specXMax: Int = 250,       // asse X spettro live (Hz)
     val sonify: Boolean = false,
     val schedule: ScheduleCfg = ScheduleCfg(),
@@ -127,7 +135,7 @@ class SettingsRepo(private val context: Context) {
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         context.dataStore.edit { prefs ->
-            prefs[KEY] = json.encodeToString(transform(decode(prefs[KEY])))
+            prefs[KEY] = json.encodeToString(transform(decode(prefs[KEY])).also { it.validate() })
         }
     }
 
@@ -143,4 +151,20 @@ class SettingsRepo(private val context: Context) {
                 instance ?: SettingsRepo(context.applicationContext).also { instance = it }
             }
     }
+}
+
+/** Shared validation for local controls and LAN requests. */
+fun AppSettings.validate() {
+    val e = engine
+    require(e.fftSize in listOf(16384, 32768)) { "FFT non supportata" }
+    require(e.bands.size in 1..8 && e.bands.map { it.id }.distinct().size == e.bands.size) { "Bande duplicate o numero non valido" }
+    require(e.bands.all { it.id.matches(Regex("[A-UW-Z]")) && it.center.isFinite() && it.width.isFinite() && it.thr.isFinite() && it.center in 1.0..2000.0 && it.width > 0 && it.width <= 1000 && it.hi <= 24000 && it.thr in -150.0..20.0 }) { "Parametri banda non validi" }
+    require(e.minOnS in 1..3600 && e.minOffS in 1..3600 && e.hystDb.isFinite() && e.hystDb in 0.0..60.0) { "Durate o isteresi non valide" }
+    require(e.smoothNight in 0.0..0.99 && e.smoothLive in 0.0..0.99) { "Smoothing non valido" }
+    require(e.clipSeconds in 1..120 && e.clipsMax in 0..1000) { "Limiti clip non validi" }
+    require(e.vib.thr.isFinite() && e.vib.thr in -150.0..20.0) { "Soglia vibrazioni non valida" }
+    require(listOf(schedule.startMin, schedule.endMin, continuous.splitMin, continuous.split2Min).all { it in 0..1439 }) { "Orario non valido" }
+    require(lan.port in 1024..65535 && specXMax in 100..2000) { "Porta o asse spettro non valido" }
+    require(calib.offsetDb.isFinite() && calib.offsetDb in -200.0..200.0) { "Calibrazione non valida" }
+    require(listOf(context.room, context.position, context.conditions).all { it.length <= 2000 }) { "Contesto troppo lungo" }
 }

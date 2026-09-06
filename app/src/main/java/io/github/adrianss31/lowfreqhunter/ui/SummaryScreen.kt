@@ -101,6 +101,7 @@ fun SummaryScreen() {
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            LlmExportPanel(sessions, if (bus.running) bus.sessionId else null)
             CapsLabel("Sessioni salvate", color = Lfh.Text)
             Spacer(Modifier.height(2.dp))
             RecurrencePanel(sessions, dao, settings.engine)
