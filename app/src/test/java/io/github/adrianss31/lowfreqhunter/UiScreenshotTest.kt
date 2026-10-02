@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.key
 import androidx.test.core.app.ApplicationProvider
 import io.github.adrianss31.lowfreqhunter.data.LfhDb
 import io.github.adrianss31.lowfreqhunter.data.MarkerEntity
@@ -219,12 +220,12 @@ class UiScreenshotTest {
         MonitorBus.notes.value = listOf(Pair(s0 + 40 * 60, "spento climatizzatore"))
     }
 
+    private lateinit var act: ComponentActivity
+
     private fun shoot(name: String, shell: Shell, steps: Int = 60, live: Boolean = false) {
         log("shoot $name")
-        val ctl = Robolectric.buildActivity(ComponentActivity::class.java).setup()
-        val act = ctl.get()
-        Typefaces.init(act)
-        act.setContent { LfhTheme { AppShell(shell) } }
+        // una sola attività: a ogni scatto cambia il contenuto (key = stato nuovo)
+        act.setContent { LfhTheme { key(name) { AppShell(shell) } } }
         var t = System.currentTimeMillis()
         repeat(steps) { i ->
             if (live && i % 5 == 0) {
@@ -241,13 +242,6 @@ class UiScreenshotTest {
         v.draw(Canvas(bmp))
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
         log("  saved")
-        // in Robolectric la view resta agganciata anche dopo destroy: senza
-        // staccarla la composizione (e le sue animazioni) continuerebbe a girare
-        act.setContent { }
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
-        (v as android.view.ViewGroup).removeAllViews()
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
-        ctl.pause().stop().destroy()
     }
 
     @Test
@@ -262,6 +256,8 @@ class UiScreenshotTest {
         log("seedMap")
         seedMap()
         log("seeded")
+        act = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        Typefaces.init(act)
 
         liveBus(rec = true)
         shoot("01_monitor_rec", Shell(), steps = 80, live = true)
