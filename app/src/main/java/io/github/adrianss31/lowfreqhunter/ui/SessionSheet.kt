@@ -97,6 +97,9 @@ val BgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 private val ctxJson = Json { ignoreUnknownKeys = true }
 
+/** Fino a quanti campioni la timeline si disegna subito (oltre: in sottofondo). */
+internal var timelineSyncMax = 6000
+
 @Composable
 fun SessionSheet(id: String) {
     val ctx = LocalContext.current
@@ -208,9 +211,22 @@ private fun SessionBody(b: SessionBundle, settings: AppSettings, live: Boolean) 
             BoxWithConstraints(Modifier.fillMaxWidth().height(130.dp)) {
                 val wPx = (maxWidth.value * density).toInt()
                 val hPx = (130 * density).toInt()
-                val img by produceState<Bitmap?>(null, b.session.id, win, wPx) {
-                    value = withContext(Dispatchers.Default) { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }
+                // sessioni brevi: subito; notti intere: fuori dal main thread
+                val small = b.samples.size <= timelineSyncMax
+                val syncImg = if (small) {
+                    remember(b.session.id, win, wPx) {
+                        runCatching { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }.getOrNull()
+                    }
+                } else null
+                var asyncImg by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+                if (!small) {
+                    LaunchedEffect(b.session.id, win, wPx) {
+                        asyncImg = withContext(Dispatchers.Default) {
+                            runCatching { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }.getOrNull()
+                        }
+                    }
                 }
+                val img = syncImg ?: asyncImg
                 img?.let {
                     Image(it.asImageBitmap(), "Timeline della sessione", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
                 }
