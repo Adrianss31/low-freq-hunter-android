@@ -268,15 +268,15 @@ class UiScreenshotTest {
         shoot("02_monitor_edit", Shell().apply { selBand = "A"; bandEdit = true }, steps = 80, live = true)
 
         liveBus(rec = false)
-        shoot("03_archivio", Shell().apply { tab = Tab.ARCHIVE }, steps = 160)
         val latest = runBlocking { LfhDb.get(ApplicationProvider.getApplicationContext()).dao().sessionsList().first() }
-        shoot("04_sessione", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latest.id) }, steps = 140)
-        shoot("05_dossier", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) }, steps = 80)
         shoot("06_mappa", Shell().apply { tab = Tab.MAP; mapSel = "m1" }, steps = 80)
         shoot("07_setup_programma", Shell().apply { tab = Tab.SETUP; setupOpen = "prog" }, steps = 80)
         shoot("08_setup_sensori", Shell().apply { tab = Tab.SETUP; setupOpen = "sens" }, steps = 80)
         shoot("09_setup_sistema", Shell().apply { tab = Tab.SETUP; setupOpen = "sys" }, steps = 80)
-        shoot("10_contesto", Shell().apply { sheet = Sheet.Context }, steps = 80)
+        shoot("10_contesto", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Context }, steps = 80)
+        shoot("04_sessione", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Session(latest.id) }, steps = 140)
+        shoot("05_dossier", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) }, steps = 80)
+        shoot("03_archivio", Shell().apply { tab = Tab.ARCHIVE }, steps = 160)
         shoot("11_monitor_standby", Shell(), steps = 60)
     }
 }

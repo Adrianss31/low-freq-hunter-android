@@ -111,8 +111,8 @@ fun MapScreen() {
     val dao = remember { LfhDb.get(ctx).dao() }
     val loaded by SettingsRepo.get(ctx).flow.collectAsState(initial = null)
     val settings = loaded ?: AppSettings()
-    val surveysDesc by dao.surveysFlow().collectAsState(initial = null)
-    val counts by dao.surveyCountsFlow().collectAsState(initial = emptyList())
+    val surveysDesc by remember { dao.surveysFlow() }.collectAsState(initial = null)
+    val counts by remember { dao.surveyCountsFlow() }.collectAsState(initial = emptyList())
     val surveys = (surveysDesc ?: emptyList()).sortedBy { it.createdAt }
     val selId = shell.mapSel?.takeIf { id -> surveys.any { it.id == id } } ?: surveys.lastOrNull()?.id
 
@@ -189,7 +189,7 @@ private fun SurveyPanel(surveyId: String, settings: AppSettings) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val dao = remember { LfhDb.get(ctx).dao() }
-    val points by dao.surveyPointsFlow(surveyId).collectAsState(initial = emptyList())
+    val points by remember(surveyId) { dao.surveyPointsFlow(surveyId) }.collectAsState(initial = emptyList())
     val bus by MonitorBus.state.collectAsState()
     var survey by remember(surveyId) { mutableStateOf<SurveyEntity?>(null) }
     LaunchedEffect(surveyId) { survey = withContext(Dispatchers.IO) { dao.survey(surveyId) } }

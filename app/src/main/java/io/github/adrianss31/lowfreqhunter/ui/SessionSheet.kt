@@ -102,7 +102,7 @@ fun SessionSheet(id: String) {
     val ctx = LocalContext.current
     val shell = LocalShell.current
     val dao = remember { LfhDb.get(ctx).dao() }
-    val sessions by dao.sessionsFlow().collectAsState(initial = emptyList())
+    val sessions by remember { dao.sessionsFlow() }.collectAsState(initial = emptyList())
     val bus by MonitorBus.state.collectAsState()
     val loaded by SettingsRepo.get(ctx).flow.collectAsState(initial = null)
     val settings = loaded ?: AppSettings()
@@ -531,7 +531,7 @@ fun DossierSheet(monthKey: Int) {
     val ctx = LocalContext.current
     val shell = LocalShell.current
     val dao = remember { LfhDb.get(ctx).dao() }
-    val sessions by dao.sessionsFlow().collectAsState(initial = emptyList())
+    val sessions by remember { dao.sessionsFlow() }.collectAsState(initial = emptyList())
     val bus by MonitorBus.state.collectAsState()
     val active = if (bus.running) bus.sessionId else null
     var preset by remember { mutableStateOf("7") }

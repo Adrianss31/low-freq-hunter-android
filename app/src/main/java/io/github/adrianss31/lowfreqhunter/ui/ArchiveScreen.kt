@@ -120,7 +120,7 @@ fun ArchiveScreen() {
     val dao = remember { LfhDb.get(ctx).dao() }
     val loaded by SettingsRepo.get(ctx).flow.collectAsState(initial = null)
     val settings = loaded ?: AppSettings()
-    val sessions by dao.sessionsFlow().collectAsState(initial = null)
+    val sessions by remember { dao.sessionsFlow() }.collectAsState(initial = null)
     val bus by MonitorBus.state.collectAsState()
     val all = sessions ?: emptyList()
     val runningId = if (bus.running) bus.sessionId else null
