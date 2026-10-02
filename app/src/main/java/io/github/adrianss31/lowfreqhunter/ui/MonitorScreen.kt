@@ -236,7 +236,7 @@ fun MonitorScreen() {
                 val over = v != null && selB != null && v >= selB.thr
                 val readC by animateColorAsState(if (over) Lfh.Orange else Lfh.Paper, tween(250), label = "readC")
                 Dot(
-                    if (v != null && v.isFinite()) "%.1f".format(v) else "—",
+                    fmtDb(v),
                     Modifier.widthIn(min = 150.dp), size = 56.sp, color = readC, lineHeight = 0.9.em,
                 )
                 Column(Modifier.weight(1f).padding(bottom = 2.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {

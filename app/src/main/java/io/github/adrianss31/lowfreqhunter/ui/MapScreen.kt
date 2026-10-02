@@ -259,17 +259,14 @@ private fun SurveyPanel(surveyId: String, settings: AppSettings) {
     var selCh by remember { mutableStateOf<String?>(null) }
     val ch = selCh?.takeIf { it in channels } ?: channels.firstOrNull()
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
-    var heat by remember { mutableStateOf<HeatmapRender.Result?>(null) }
     fun valueOf(p: SurveyPointEntity, c: String): Double? =
         if (c == Channels.VIB) p.vibDb
         else runCatching { json.decodeFromString<Map<String, Double>>(p.levelsJson)[c] }.getOrNull()
-    LaunchedEffect(points, ch, mapSize) {
+    // IDW su una griglia 72×54: pochi ms anche con decine di punti
+    val heat = remember(points, ch, mapSize) {
         val c = ch
-        if (c == null || mapSize.width <= 0) {
-            heat = null
-            return@LaunchedEffect
-        }
-        heat = withContext(Dispatchers.Default) {
+        if (c == null || mapSize.width <= 0) null
+        else {
             val pts = points.mapNotNull { p -> valueOf(p, c)?.let { Idw.Point(p.x, p.y, it) } }
             HeatmapRender.render(pts, mapSize.width / 2, mapSize.height / 2)
         }
