@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -208,25 +209,27 @@ private fun SessionBody(b: SessionBundle, settings: AppSettings, live: Boolean) 
                     contentAlignment = Alignment.Center,
                 ) { Mono(if (zoom) "↺ TUTTO" else "ZOOM 2H", size = 9.sp, color = Lfh.Paper, weight = FontWeight.SemiBold, spacing = 0.1.em) }
             }
-            BoxWithConstraints(Modifier.fillMaxWidth().height(130.dp)) {
-                val wPx = (maxWidth.value * density).toInt()
-                val hPx = (130 * density).toInt()
-                // sessioni brevi: subito; notti intere: fuori dal main thread
-                val small = b.samples.size <= timelineSyncMax
-                val syncImg = if (small) {
-                    remember(b.session.id, win, wPx) {
-                        runCatching { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }.getOrNull()
-                    }
-                } else null
-                var asyncImg by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
-                if (!small) {
-                    LaunchedEffect(b.session.id, win, wPx) {
-                        asyncImg = withContext(Dispatchers.Default) {
-                            runCatching { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }.getOrNull()
-                        }
+            // larghezza misurata qui (non in una sotto-composizione): lo stato
+            // della bitmap vive nella composizione normale della scheda
+            var tlW by remember { mutableIntStateOf(0) }
+            val hPx = (130 * density).toInt()
+            // sessioni brevi: subito; notti intere: fuori dal main thread
+            val small = b.samples.size <= timelineSyncMax
+            val syncImg = if (small && tlW > 0) {
+                remember(b.session.id, win, tlW) {
+                    runCatching { SessionRender.timeline(b, tlW, hPx, density, win.first, win.second) }.getOrNull()
+                }
+            } else null
+            var asyncImg by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
+            if (!small && tlW > 0) {
+                LaunchedEffect(b.session.id, win, tlW) {
+                    asyncImg = withContext(Dispatchers.Default) {
+                        runCatching { SessionRender.timeline(b, tlW, hPx, density, win.first, win.second) }.getOrNull()
                     }
                 }
-                val img = syncImg ?: asyncImg
+            }
+            val img = syncImg ?: asyncImg
+            Box(Modifier.fillMaxWidth().height(130.dp).onSizeChanged { tlW = it.width }) {
                 img?.let {
                     Image(it.asImageBitmap(), "Timeline della sessione", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
                 }
@@ -272,7 +275,7 @@ private fun SessionBody(b: SessionBundle, settings: AppSettings, live: Boolean) 
             )
             val wfImg = remember(b.session.id, win) {
                 val sl = b.slices.filter { it.t >= win.first && it.t <= win.second + 30 }.map { it.bins }
-                WfBitmaps.fromSlices(sl, minCols = if (zoom) 1 else 60)
+                WfBitmaps.fromSlices(sl)
             }
             Canvas(Modifier.fillMaxWidth().height(70.dp).clip(RoundedCornerShape(4.dp))) {
                 drawRect(Lfh.WfBg)
