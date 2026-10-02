@@ -249,6 +249,8 @@ class UiScreenshotTest {
         // solo su richiesta (workflow "UI screenshots"): lento e non è un controllo
         org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
         watchdog()
+        // frame a ~60 Hz come su un telefono (di default Robolectric ne fa uno al ms)
+        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
         log("seed")
         seed()
         log("seedMap")

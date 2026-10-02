@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -149,18 +150,23 @@ fun ArchiveScreen() {
 
     // aggregati orari: cache su file, calcolati in sottofondo
     val grids = remember { mutableStateMapOf<String, HourStats.Grid>() }
+    var gridVer by remember { mutableIntStateOf(0) }
     val evStarts = remember { mutableStateMapOf<String, List<Long>>() }
     val need = (inMonth + listOfNotNull(latest)).distinctBy { it.id }
     LaunchedEffect(need.map { it.id to it.lastT }) {
         for (s in need) {
             val known = grids[s.id]
-            if (known == null || known.upToT < s.lastT) grids[s.id] = HourStats.load(ctx, dao, s)
+            if (known == null || known.upToT < s.lastT) {
+                grids[s.id] = HourStats.load(ctx, dao, s)
+                gridVer++
+            }
         }
         val ids = inMonth.map { it.id }
         if (ids.isNotEmpty()) {
             val evs = withContext(Dispatchers.IO) { dao.eventsForSessions(ids) }
             evStarts.clear()
             evs.filter { it.band != Channels.GAP }.groupBy { it.sessionId }.forEach { (k, v) -> evStarts[k] = v.map { it.startT } }
+            gridVer++
         }
     }
 
@@ -174,6 +180,17 @@ fun ArchiveScreen() {
         }
         return best
     }
+    // valori delle celle calcolati una volta per mese/filtro/dati, non a ogni frame
+    val cellVals = remember(gridVer, filter, month, h0, need.map { it.id }) {
+        FloatArray(rows.size * 24) { i -> cell(rows[i / 24].startS + (i % 24) * 3600L) ?: Float.NaN }
+    }
+    val rowEv = remember(gridVer, month, h0) {
+        IntArray(rows.size) { r ->
+            val a = rows[r].startS
+            inMonth.sumOf { s -> evStarts[s.id]?.count { it >= a && it < a + 86400 } ?: 0 }
+        }
+    }
+    fun cellAt(r: Int, h: Int): Float? = cellVals.getOrNull(r * 24 + h)?.takeIf { !it.isNaN() }
     fun covering(t: Long): SessionEntity? =
         inMonth.firstOrNull { it.startedAt / 1000 <= t && t < it.endS(it.id == runningId) }
 
@@ -294,8 +311,8 @@ fun ArchiveScreen() {
             // statistiche del mese
             val monthSessions = all.filter { monthKeyOf(it.startedAt) == month }
             val hc = IntArray(24)
-            for (r in rows) for (h in 0 until 24) {
-                val v = cell(r.startS + h * 3600L)
+            for (r in rows.indices) for (h in 0 until 24) {
+                val v = cellAt(r, h)
                 if (v != null && v > 0) hc[h]++
             }
             val pk = hc.indices.maxByOrNull { hc[it] } ?: 0
@@ -347,12 +364,7 @@ fun ArchiveScreen() {
                         )
                     }
                 } else {
-                    val inf = rememberInfiniteTransition(label = "breath")
-                    val a by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "breathA")
-                    Box(
-                        Modifier.size(16.dp).border(1.5.dp, Lfh.PaperDim, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) { Box(Modifier.size(4.dp).clip(CircleShape).background(Lfh.PaperDim.copy(alpha = a))) }
+                    BreathDot()
                     Mono(
                         "TOCCA PER APRIRE · TIENI PREMUTO E SCORRI PER L'ANTEPRIMA · SINISTRA GIORNO, DESTRA NOTTE",
                         size = 9.sp, color = Lfh.PaperDim, spacing = 0.08.em, lineHeight = 13.sp,
@@ -486,12 +498,11 @@ fun ArchiveScreen() {
                     monoText(WD[row.dow - 1].toString(), off + 16.dp.toPx(), y + 9.dp.toPx(), Color(0xFF55534C).copy(alpha = alpha), lab)
                     var any = false
                     for (h in 0 until 24) {
-                        val hs = row.startS + h * 3600L
-                        val v = cell(hs)
+                        val v = cellAt(r, h)
                         if (v != null) any = true
                         drawRect(Render.heatCell(v).copy(alpha = alpha), Offset(lw + h * cw + 0.5f + off, y), Size(cw - 1f, rowH))
                     }
-                    val evN = inMonth.sumOf { s -> evStarts[s.id]?.count { it >= row.startS && it < row.startS + 86400 } ?: 0 }
+                    val evN = rowEv.getOrElse(r) { 0 }
                     monoText(
                         if (any) "$evN" else "—", size.width - 2f + off, y + 9.dp.toPx(),
                         (if (!any) Color(0xFF3A3934) else if (evN > 0) Lfh.Paper else Color(0xFF55534C)).copy(alpha = alpha),
@@ -561,6 +572,17 @@ fun ArchiveScreen() {
             "TRASCINA ← → SULLA HEATMAP PER CAMBIARE MESE",
             Modifier.fillMaxWidth(), size = 9.sp, spacing = 0.08.em, align = TextAlign.Center,
         )
+    }
+}
+
+/** Punto che "respira": animato nella sola fase di disegno. */
+@Composable
+private fun BreathDot() {
+    val inf = rememberInfiniteTransition(label = "breath")
+    val a by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "breathA")
+    Canvas(Modifier.size(16.dp)) {
+        drawCircle(Lfh.PaperDim, size.minDimension / 2 - 0.75.dp.toPx(), style = Stroke(1.5.dp.toPx()))
+        drawCircle(Lfh.PaperDim.copy(alpha = a), 2.dp.toPx())
     }
 }
 
