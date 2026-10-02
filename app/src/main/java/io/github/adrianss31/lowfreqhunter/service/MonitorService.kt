@@ -41,6 +41,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -199,12 +200,12 @@ class MonitorService : Service() {
         val dao = LfhDb.get(this).dao()
         val cap = CaptureEngine(this, cfg.fftSize, cfg.smoothNight)
         capture = cap
+        // stessa finestra giorno/notte e stessa cfg → si prosegue la
+        // sessione esistente invece di crearne una nuova
+        val resume = if (listenOnly) null else findResumable(dao, settings)
         val rec = if (listenOnly) {
             null
         } else {
-            // stessa finestra giorno/notte e stessa cfg → si prosegue la
-            // sessione esistente invece di crearne una nuova
-            val resume = findResumable(dao, settings)
             SessionRecorder(dao, scope, cfg, cap.actualSampleRate, cap.binHz, cap.sourceName, sessionLabelPrefix(), resume, Json.encodeToString(settings.context), deviceMetadata())
         }
         recorder = rec
@@ -231,6 +232,7 @@ class MonitorService : Service() {
         }
 
         MonitorBus.resetSession()
+        if (resume != null) preloadSession(dao, resume.id)
         MonitorBus.state.value = MonitorBus.State(
             running = true,
             mode = if (listenOnly) "listen" else "rec",
@@ -438,6 +440,27 @@ class MonitorService : Service() {
             Json { ignoreUnknownKeys = true }.decodeFromString<EngineCfg>(last.cfgJson)
         }.getOrNull()
         return if (snap == cfg && last.contextJson == Json.encodeToString(settings.context) && last.deviceJson == deviceMetadata()) last else null
+    }
+
+    /**
+     * Sessione ripresa: il Monitor mostra subito spettrogramma, eventi e note
+     * già registrati, non solo quelli successivi alla ripresa.
+     */
+    private fun preloadSession(dao: io.github.adrianss31.lowfreqhunter.data.LfhDao, id: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val evs = dao.events(id).map { EventData(it.band, it.startT, it.endT, it.durationS, it.peakDb, it.avgDb, it.kind) }
+                val marks = dao.markers(id)
+                val sl = dao.slices(id).map { Pair(it.t, it.bins) }
+                if (MonitorBus.state.value.sessionId != id) return@launch
+                MonitorBus.events.update { evs + it }
+                MonitorBus.slices.update { sl + it }
+                MonitorBus.markers.update { marks.map { m -> m.t } + it }
+                MonitorBus.notes.update {
+                    (marks.filter { m -> m.origin.startsWith("nota: ") }.map { m -> m.t to m.origin.removePrefix("nota: ") } + it).takeLast(10)
+                }
+            }
+        }
     }
 
     /** Etichetta della nuova sessione (Notte/Giorno) con due spezzamenti. */

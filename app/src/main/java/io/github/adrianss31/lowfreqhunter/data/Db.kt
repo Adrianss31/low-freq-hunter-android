@@ -103,6 +103,9 @@ data class SurveyPointEntity(
     val dwellS: Int,              // durata della misura
 )
 
+/** Numero di punti per rilievo (chip della Mappa). */
+data class SurveyCount(val surveyId: String, val n: Int)
+
 @Dao
 interface LfhDao {
     // sessioni
@@ -187,6 +190,9 @@ interface LfhDao {
 
     @Query("SELECT * FROM survey_points WHERE surveyId = :id ORDER BY t")
     fun surveyPointsFlow(id: String): Flow<List<SurveyPointEntity>>
+
+    @Query("SELECT surveyId, COUNT(*) AS n FROM survey_points GROUP BY surveyId")
+    fun surveyCountsFlow(): Flow<List<SurveyCount>>
 
     @Query("DELETE FROM survey_points WHERE id = :pointId")
     suspend fun deleteSurveyPoint(pointId: String)

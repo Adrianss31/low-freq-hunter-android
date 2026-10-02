@@ -28,7 +28,8 @@ fun fmtDur(totalS: Long): String {
 
 fun fmtHm(totalMin: Int): String = "%02d:%02d".format(totalMin / 60, totalMin % 60)
 
-fun fmtDb(v: Double?): String = if (v == null || !v.isFinite()) "—" else "%.1f".format(v)
+/** dB con un decimale; "—" senza dato o a fondo scala (silenzio digitale). */
+fun fmtDb(v: Double?): String = if (v == null || !v.isFinite() || v <= -119.0) "—" else "%.1f".format(v)
 
 fun fmtDateShort(ms: Long): String =
     SimpleDateFormat("dd/MM", Locale.ITALIAN).format(Date(ms))

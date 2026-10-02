@@ -51,7 +51,12 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
-        unitTests.all { it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2") }
+        unitTests.all {
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+            // screenshot UI: una JVM per test, altrimenti il dispatcher Main di
+            // Robolectric resta legato al looper del primo test
+            if (System.getenv("LFH_SCREENSHOTS") == "1") it.forkEvery = 1
+        }
     }
 
     buildFeatures {
