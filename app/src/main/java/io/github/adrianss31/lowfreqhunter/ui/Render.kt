@@ -1,311 +1,71 @@
 package io.github.adrianss31.lowfreqhunter.ui
 
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import android.graphics.Paint
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.unit.dp
-import io.github.adrianss31.lowfreqhunter.engine.BandCfg
+import androidx.compose.ui.graphics.toArgb
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
+import io.github.adrianss31.lowfreqhunter.engine.Palette
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/** Rendering condiviso di spettro e waterfall (port di js/ui.js e js/live.js). */
+/** Utilità di disegno condivise (colormap, etichette su Canvas, colonne waterfall). */
 object Render {
 
-    // colormap tipo "inferno" — stessi stop della PWA
-    private val stops = arrayOf(
-        intArrayOf(5, 10, 30), intArrayOf(30, 20, 90), intArrayOf(120, 30, 130),
-        intArrayOf(210, 60, 120), intArrayOf(255, 140, 50), intArrayOf(255, 220, 100),
-        intArrayOf(255, 255, 235),
-    )
+    /** Colormap "inferno" del waterfall (stessi stop di report e dashboard). */
+    fun wfColor(v: Float): Color = Color(Palette.wfColorInt(v))
 
-    fun wfColor(v: Float): Color {
-        val c = v.coerceIn(0f, 1f) * (stops.size - 1)
-        val i = c.toInt().coerceAtMost(stops.size - 2)
-        val f = c - i
-        val a = stops[i]
-        val b = stops[i + 1]
-        return Color(
-            (a[0] + (b[0] - a[0]) * f).roundToInt(),
-            (a[1] + (b[1] - a[1]) * f).roundToInt(),
-            (a[2] + (b[2] - a[2]) * f).roundToInt(),
-        )
+    /** Colore di una cella di heatmap per un livello [overDb] rispetto alla soglia. */
+    fun heatCell(overDb: Float?): Color = when {
+        overDb == null || overDb.isNaN() -> Color(0xFF191816)
+        overDb < -12f -> Color(0xFF1B1A26)
+        else -> wfColor(0.3f + 0.7f * ((overDb + 12f) / 22f).coerceIn(0f, 1f))
     }
 
-    private val textPaint = android.graphics.Paint().apply {
-        color = android.graphics.Color.argb(120, 255, 255, 255)
-        textSize = 24f
-        typeface = android.graphics.Typeface.MONOSPACE
-        isAntiAlias = true
-    }
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    fun DrawScope.label(text: String, x: Float, y: Float, color: Color? = null) {
-        val p = android.graphics.Paint(textPaint)
-        if (color != null) {
-            p.color = android.graphics.Color.argb(
-                200,
-                (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt(),
-            )
-        }
-        drawContext.canvas.nativeCanvas.drawText(text, x, y, p)
-    }
-
-    /** Spettro live: griglia, bande evidenziate con segmento-soglia, curva. */
-    fun DrawScope.drawSpectrum(
-        spec: FloatArray,
-        binHz: Double,
-        xMaxHz: Double,
-        bands: List<BandCfg>,
-        bandColor: (String) -> Color,
+    /** Etichetta in Geist Mono su Canvas; [align] come Paint.Align. */
+    fun DrawScope.monoText(
+        text: String,
+        x: Float,
+        y: Float,
+        color: Color,
+        sizePx: Float,
+        align: Paint.Align = Paint.Align.LEFT,
+        dot: Boolean = false,
     ) {
-        val w = size.width
-        val h = size.height
-        val dbMin = -120.0
-        val dbMax = 0.0
-        fun xOf(f: Double) = (f / xMaxHz * w).toFloat()
-        fun yOf(db: Double) = (h - (db.coerceIn(dbMin, dbMax) - dbMin) / (dbMax - dbMin) * h).toFloat()
-
-        // griglia dB
-        var db = -100.0
-        while (db <= 0.0) {
-            drawLine(Lfh.Border.copy(alpha = 0.4f), Offset(0f, yOf(db)), Offset(w, yOf(db)))
-            label("${db.toInt()}", 6f, yOf(db) - 6f)
-            db += 20.0
-        }
-        // griglia Hz
-        val fStep = if (xMaxHz <= 250) 50.0 else if (xMaxHz <= 500) 100.0 else 200.0
-        var f = fStep
-        while (f < xMaxHz) {
-            drawLine(Lfh.Border.copy(alpha = 0.4f), Offset(xOf(f), 0f), Offset(xOf(f), h))
-            label("${f.toInt()}", xOf(f) + 4f, h - 8f)
-            f += fStep
-        }
-        // bande evidenziate + soglia
-        for (b in bands) {
-            val c = bandColor(b.id)
-            val x0 = xOf(b.lo)
-            val x1 = xOf(b.hi)
-            if (x0 > w) continue
-            drawRect(c.copy(alpha = 0.10f), Offset(x0, 0f), Size(maxOf(x1 - x0, 2f), h))
-            drawLine(c, Offset(x0, yOf(b.thr)), Offset(minOf(x1, w), yOf(b.thr)), strokeWidth = 4f)
-            label("${b.center.toInt()}", x0 + 4f, 26f, c)
-        }
-        // curva spettro
-        val maxBin = minOf((xMaxHz / binHz).toInt(), spec.size - 1)
-        if (maxBin > 1) {
-            val path = Path()
-            path.moveTo(0f, yOf(spec[0].toDouble()))
-            for (i in 1..maxBin) {
-                path.lineTo(xOf(i * binHz), yOf(spec[i].toDouble()))
-            }
-            drawPath(path, Lfh.Accent, style = Stroke(width = 3f))
-        }
+        paint.typeface = if (dot) Typefaces.dot else Typefaces.mono
+        paint.textSize = sizePx
+        paint.color = color.toArgb()
+        paint.textAlign = align
+        drawContext.canvas.nativeCanvas.drawText(text, x, y, paint)
     }
 
-    private fun DrawScope.labelRight(text: String, xRight: Float, y: Float, color: Color) {
-        val p = android.graphics.Paint(textPaint)
-        p.color = android.graphics.Color.argb(
-            220,
-            (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt(),
-        )
-        drawContext.canvas.nativeCanvas.drawText(text, xRight - p.measureText(text), y, p)
+    fun DrawScope.textWidth(text: String, sizePx: Float): Float {
+        paint.typeface = Typefaces.mono
+        paint.textSize = sizePx
+        return paint.measureText(text)
     }
 
-    /**
-     * Scala delle frequenze FUORI dal grafico: etichette colorate + tick nel
-     * gutter sinistro, così il waterfall resta pulito. Ritorna la x d'inizio
-     * del plot.
-     */
-    private fun DrawScope.wfGutter(guides: List<Pair<Double, Color>>): Float {
-        val gutter = 34.dp.toPx()
-        val h = size.height
-        for ((hz, color) in guides) {
-            val y = (h - (hz - NightEngine.WF_FMIN) / (NightEngine.WF_FMAX - NightEngine.WF_FMIN) * h).toFloat()
-            if (y < 0 || y > h) continue
-            drawLine(color, Offset(gutter - 5.dp.toPx(), y), Offset(gutter - 1.dp.toPx(), y), strokeWidth = 2f)
-            labelRight("${hz.toInt()}", gutter - 7.dp.toPx(), y + 4.dp.toPx(), color)
-        }
-        return gutter
-    }
-
-    /**
-     * Waterfall da slice quantizzate (byte 0..255). Range dinamico stirato
-     * sui dati come nella PWA. [guides]: (Hz, colore) — solo scala nel gutter.
-     */
-    fun DrawScope.drawWaterfallSlices(
-        slices: List<Pair<Long, ByteArray>>,
-        guides: List<Pair<Double, Color>>,
-    ) {
-        val h = size.height
-        val gutter = wfGutter(guides)
-        val plotW = size.width - gutter
-        drawRect(Color.Black, Offset(gutter, 0f), Size(plotW, h))
-        if (slices.isNotEmpty()) {
-            var lo = 255
-            var hi = 0
-            for ((_, bins) in slices) {
-                for (b in bins) {
-                    val v = b.toInt() and 0xFF
-                    if (v < lo) lo = v
-                    if (v > hi) hi = v
-                }
+    /** Colonna waterfall (dB per bin, 20–200 Hz su [NightEngine.WF_NBINS] bin) da uno spettro. */
+    fun wfColumn(spec: FloatArray, binHz: Double): FloatArray {
+        val out = FloatArray(NightEngine.WF_NBINS)
+        val range = NightEngine.WF_FMAX - NightEngine.WF_FMIN
+        for (b in 0 until NightEngine.WF_NBINS) {
+            val fL = NightEngine.WF_FMIN + b / NightEngine.WF_NBINS.toDouble() * range
+            val fH = NightEngine.WF_FMIN + (b + 1) / NightEngine.WF_NBINS.toDouble() * range
+            val i0 = maxOf(0, (fL / binHz).roundToInt())
+            val i1 = minOf(spec.size - 1, (fH / binHz).roundToInt())
+            var p = 0.0
+            var n = 0
+            for (i in i0..i1) {
+                p += 10.0.pow(spec[i] / 10.0)
+                n++
             }
-            if (hi - lo < 20) hi = lo + 20
-            val nBins = slices[0].second.size
-            val cols = maxOf(slices.size, 60)
-            val colW = plotW / cols
-            val rowH = h / nBins
-            slices.forEachIndexed { xi, (_, bins) ->
-                val x = gutter + xi * colW
-                for (b in 0 until nBins) {
-                    val v = ((bins[b].toInt() and 0xFF) - lo).toFloat() / (hi - lo)
-                    drawRect(
-                        wfColor(v),
-                        Offset(x, h - (b + 1) * rowH),
-                        Size(colW + 1f, rowH + 1f),
-                    )
-                }
-            }
+            out[b] = if (n > 0) (10.0 * log10(p / n + 1e-12)).toFloat() else -120f
         }
-    }
-
-    /**
-     * (Non più usata dalla UI: il dettaglio sessione ora renderizza la
-     * timeline come bitmap statico — vedi BitmapRender. Tenuta come
-     * riferimento del layout in DrawScope.)
-     */
-    @Suppress("unused")
-    fun DrawScope.drawTimelineDark(b: io.github.adrianss31.lowfreqhunter.data.SessionBundle) {
-        val w = size.width
-        val h = size.height
-        drawRect(Lfh.Bg, Offset.Zero, size)
-        if (b.samples.size < 2) return
-
-        val channels = b.channels
-        val laneH = 22f
-        val plotY0 = laneH * channels.size + 8f
-        val plotH = h - plotY0 - 30f
-        val tMin = b.samples.first().t
-        val tMax = b.samples.last().t
-        val span = maxOf(1L, tMax - tMin).toFloat()
-        val dbMin = -110.0
-        val dbMax = -10.0
-        fun xOf(t: Long) = (t - tMin) / span * w
-        fun yOf(db: Double) = (plotY0 + plotH - (db.coerceIn(dbMin, dbMax) - dbMin) / (dbMax - dbMin) * plotH).toFloat()
-        fun chColor(ch: String) = if (ch == io.github.adrianss31.lowfreqhunter.engine.Channels.VIB) Lfh.VibColor else Lfh.bandColor(ch)
-
-        // gap su tutta l'altezza
-        for (g in b.gaps) {
-            drawRect(
-                Color.White.copy(alpha = 0.08f),
-                Offset(xOf(g.startT), 0f),
-                Size(maxOf(xOf(g.endT) - xOf(g.startT), 2f), h),
-            )
-        }
-        // corsie evento
-        channels.forEachIndexed { i, ch ->
-            val y = i * laneH + 2f
-            drawRect(Color.White.copy(alpha = 0.04f), Offset(0f, y), Size(w, laneH - 4f))
-            label(ch, 4f, y + laneH - 8f, chColor(ch))
-            for (ev in b.events.filter { it.band == ch }) {
-                drawRect(
-                    chColor(ch),
-                    Offset(xOf(ev.startT), y),
-                    Size(maxOf(xOf(ev.endT) - xOf(ev.startT), 3f), laneH - 4f),
-                )
-            }
-        }
-        // griglia dB
-        var db = -100.0
-        while (db <= -20.0) {
-            drawLine(Lfh.Border.copy(alpha = 0.4f), Offset(0f, yOf(db)), Offset(w, yOf(db)))
-            label("${db.toInt()}", 4f, yOf(db) - 4f)
-            db += 20.0
-        }
-        // soglie tratteggiate
-        for (band in b.cfg.enabledBands()) {
-            val y = yOf(band.thr)
-            var x = 0f
-            while (x < w) {
-                drawLine(Lfh.bandColor(band.id).copy(alpha = 0.5f), Offset(x, y), Offset(minOf(x + 8f, w), y))
-                x += 16f
-            }
-        }
-        // curve
-        val stride = maxOf(1, b.samples.size / (w.toInt() * 2).coerceAtLeast(1))
-        fun plot(color: Color, width: Float, getter: (Int) -> Double?) {
-            val path = Path()
-            var started = false
-            var i = 0
-            while (i < b.samples.size) {
-                val v = getter(i)
-                if (v == null || !v.isFinite()) {
-                    started = false
-                } else {
-                    val px = xOf(b.samples[i].t)
-                    val py = yOf(v)
-                    if (started) path.lineTo(px, py) else path.moveTo(px, py)
-                    started = true
-                }
-                i += stride
-            }
-            drawPath(path, color, style = Stroke(width = width))
-        }
-        plot(Color.White.copy(alpha = 0.25f), 2f) { b.samples[it].ref }
-        for (band in b.cfg.enabledBands()) {
-            plot(Lfh.bandColor(band.id), 2.5f) { b.levels[it][band.id] }
-        }
-        if (b.cfg.vib.enabled) {
-            plot(Lfh.VibColor, 2.5f) { b.samples[it].vibDb }
-        }
-        // marker
-        for (m in b.markers) {
-            val x = xOf(m.t)
-            val path = Path()
-            path.moveTo(x, 0f)
-            path.lineTo(x - 7f, 14f)
-            path.lineTo(x + 7f, 14f)
-            path.close()
-            drawPath(path, Color.White)
-        }
-        // orari
-        for (i in 0..4) {
-            val t = tMin + ((tMax - tMin) * i / 4.0).toLong()
-            label(fmtClock(t * 1000), minOf(xOf(t) + 2f, w - 100f), h - 6f)
-        }
-    }
-
-    /**
-     * Waterfall live scorrevole: colonne = livelli recenti (64 bin ciascuna).
-     * [shiftFrac] 0..1 trasla di una frazione di colonna verso destra: animato
-     * da 1 a 0 dopo ogni nuova colonna, lo scorrimento diventa continuo
-     * (il chiamante deve avere clipToBounds sul Canvas).
-     */
-    fun DrawScope.drawWaterfallColumns(
-        columns: List<FloatArray>, // dB per bin, più recente in coda
-        maxColumns: Int,
-        guides: List<Pair<Double, Color>>,
-        shiftFrac: Float = 0f,
-    ) {
-        val h = size.height
-        val gutter = wfGutter(guides)
-        val plotW = size.width - gutter
-        drawRect(Color.Black, Offset(gutter, 0f), Size(plotW, h))
-        if (columns.isNotEmpty()) {
-            val nBins = columns[0].size
-            val colW = plotW / maxColumns
-            val rowH = h / nBins
-            val startX = gutter + plotW - columns.size * colW + shiftFrac * colW
-            columns.forEachIndexed { xi, col ->
-                val x = startX + xi * colW
-                for (b in 0 until nBins) {
-                    val v = ((col[b] + 100f) / 70f)
-                    drawRect(wfColor(v), Offset(x, h - (b + 1) * rowH), Size(colW + 1f, rowH + 1f))
-                }
-            }
-        }
+        return out
     }
 }

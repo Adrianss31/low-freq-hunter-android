@@ -4,35 +4,21 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import io.github.adrianss31.lowfreqhunter.ui.Lfh
+import io.github.adrianss31.lowfreqhunter.ui.AppShell
 import io.github.adrianss31.lowfreqhunter.ui.LfhTheme
-import io.github.adrianss31.lowfreqhunter.ui.LiveScreen
-import io.github.adrianss31.lowfreqhunter.ui.NightScreen
-import io.github.adrianss31.lowfreqhunter.ui.SettingsScreen
-import io.github.adrianss31.lowfreqhunter.ui.SummaryScreen
-import io.github.adrianss31.lowfreqhunter.ui.SurveyScreen
-import io.github.adrianss31.lowfreqhunter.ui.TabBar
+import io.github.adrianss31.lowfreqhunter.ui.Typefaces
 
 class MainActivity : ComponentActivity() {
 
@@ -40,12 +26,18 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // corpo chiaro: icone di sistema scure su barre trasparenti
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
+        Typefaces.init(this)
         requestNeededPermissions()
         requestIgnoreBatteryOptimizations()
         setContent {
             LfhTheme {
-                Root()
+                AppShell()
             }
         }
     }
@@ -74,30 +66,5 @@ class MainActivity : ComponentActivity() {
                     .setData(Uri.parse("package:$packageName")),
             )
         }
-    }
-}
-
-@Composable
-private fun Root() {
-    // saveable: sopravvive comunque alla ricreazione dell'activity
-    var tab by rememberSaveable { mutableIntStateOf(1) } // parte su NOTTE
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Lfh.Bg)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-    ) {
-        io.github.adrianss31.lowfreqhunter.ui.UpdatePanel()
-        Box(Modifier.weight(1f)) {
-            when (tab) {
-                0 -> LiveScreen()
-                1 -> NightScreen()
-                2 -> SummaryScreen()
-                3 -> SurveyScreen()
-                else -> SettingsScreen()
-            }
-        }
-        TabBar(listOf("Live", "Notte", "Log", "Mappa", "Setup"), tab) { tab = it }
     }
 }

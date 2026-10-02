@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.LowFreqHunter" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0A0A0C</item>
-        <item name="android:statusBarColor">#0A0A0C</item>
-        <item name="android:navigationBarColor">#0A0A0C</item>
+    <!-- corpo chiaro "capsula": barre di sistema trasparenti con icone scure
+         (l'activity va edge-to-edge, la UI gestisce gli inset) -->
+    <style name="Theme.LowFreqHunter" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#D9D7D0</item>
+        <item name="android:statusBarColor">#00000000</item>
+        <item name="android:navigationBarColor">#00000000</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
