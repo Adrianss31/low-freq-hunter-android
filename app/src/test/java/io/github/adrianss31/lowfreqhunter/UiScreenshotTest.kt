@@ -300,6 +300,20 @@ class UiShot00Timeline : UiScreenshotBase() {
             log("timeline lit=$lit")
             File(out, "00_timeline.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }.onFailure { log("timeline FAIL ${it.stackTraceToString().take(2000)}") }
+        // stesso disegno da un thread di background (come fa l'app per le notti lunghe)
+        var bg: Throwable? = null
+        var bgLit = -1
+        val th = Thread {
+            runCatching {
+                val bmp = io.github.adrianss31.lowfreqhunter.ui.SessionRender.timeline(b, 1100, 357, 2.75f, t0, t1)
+                var lit = 0
+                for (x in 0 until bmp.width step 4) for (y in 0 until bmp.height step 4) if (bmp.getPixel(x, y) != 0xFF10100E.toInt()) lit++
+                bgLit = lit
+            }.onFailure { bg = it }
+        }
+        th.start()
+        th.join(60_000)
+        log("timeline background alive=${th.isAlive} lit=$bgLit err=${bg?.toString()?.take(500)}")
     }
 }
 
