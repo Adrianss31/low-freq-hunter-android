@@ -207,18 +207,14 @@ private fun SessionBody(b: SessionBundle, settings: AppSettings, live: Boolean) 
                     contentAlignment = Alignment.Center,
                 ) { Mono(if (zoom) "↺ TUTTO" else "ZOOM 2H", size = 9.sp, color = Lfh.Paper, weight = FontWeight.SemiBold, spacing = 0.1.em) }
             }
-            // larghezza misurata qui (non in una sotto-composizione): lo stato
-            // della bitmap vive nella composizione normale della scheda
-            var tlW by remember { mutableIntStateOf(0) }
-            val hPx = (130 * density).toInt()
-            // disegnata una volta (apertura, zoom): anche una notte intera sono
-            // poche decine di ms, e poi lo scroll mostra solo l'immagine
-            val img = if (tlW > 0) {
-                remember(b.session.id, win, tlW) {
-                    runCatching { SessionRender.timeline(b, tlW, hPx, density, win.first, win.second) }.getOrNull()
+            BoxWithConstraints(Modifier.fillMaxWidth().height(130.dp)) {
+                val wPx = (maxWidth.value * density).toInt()
+                val hPx = (130 * density).toInt()
+                // disegnata una volta (apertura, zoom): anche una notte intera sono
+                // poche decine di ms, poi lo scroll mostra solo l'immagine
+                val img = remember(b.session.id, win, wPx) {
+                    runCatching { SessionRender.timeline(b, wPx, hPx, density, win.first, win.second) }.getOrNull()
                 }
-            } else null
-            Box(Modifier.fillMaxWidth().height(130.dp).onSizeChanged { tlW = it.width }) {
                 img?.let {
                     Image(it.asImageBitmap(), "Timeline della sessione", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
                 }
