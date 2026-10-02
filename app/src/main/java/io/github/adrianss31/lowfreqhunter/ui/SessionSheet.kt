@@ -98,8 +98,6 @@ val BgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 private val ctxJson = Json { ignoreUnknownKeys = true }
 
-/** Fino a quanti campioni la timeline si disegna subito (oltre: in sottofondo). */
-internal var timelineSyncMax = 6000
 
 @Composable
 fun SessionSheet(id: String) {
@@ -213,22 +211,13 @@ private fun SessionBody(b: SessionBundle, settings: AppSettings, live: Boolean) 
             // della bitmap vive nella composizione normale della scheda
             var tlW by remember { mutableIntStateOf(0) }
             val hPx = (130 * density).toInt()
-            // sessioni brevi: subito; notti intere: fuori dal main thread
-            val small = b.samples.size <= timelineSyncMax
-            val syncImg = if (small && tlW > 0) {
+            // disegnata una volta (apertura, zoom): anche una notte intera sono
+            // poche decine di ms, e poi lo scroll mostra solo l'immagine
+            val img = if (tlW > 0) {
                 remember(b.session.id, win, tlW) {
                     runCatching { SessionRender.timeline(b, tlW, hPx, density, win.first, win.second) }.getOrNull()
                 }
             } else null
-            var asyncImg by remember(b.session.id) { mutableStateOf<Bitmap?>(null) }
-            if (!small && tlW > 0) {
-                LaunchedEffect(b.session.id, win, tlW) {
-                    asyncImg = withContext(Dispatchers.Default) {
-                        runCatching { SessionRender.timeline(b, tlW, hPx, density, win.first, win.second) }.getOrNull()
-                    }
-                }
-            }
-            val img = syncImg ?: asyncImg
             Box(Modifier.fillMaxWidth().height(130.dp).onSizeChanged { tlW = it.width }) {
                 img?.let {
                     Image(it.asImageBitmap(), "Timeline della sessione", Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)

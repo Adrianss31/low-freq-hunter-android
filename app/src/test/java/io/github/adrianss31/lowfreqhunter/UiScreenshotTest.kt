@@ -321,12 +321,6 @@ class UiShot01MonitorRec : UiScreenshotBase() { @Test fun shot() = capture("01_m
 class UiShot02MonitorEdit : UiScreenshotBase() { @Test fun shot() = capture("02_monitor_edit", true, 80, live = true) { Shell().apply { selBand = "A"; bandEdit = true } } }
 class UiShot03Archivio : UiScreenshotBase() { @Test fun shot() = capture("03_archivio", false, 160) { Shell().apply { tab = Tab.ARCHIVE } } }
 class UiShot04Sessione : UiScreenshotBase() { @Test fun shot() = capture("04_sessione", false, 140) { Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latestId()) } } }
-class UiShot04bSessioneAsync : UiScreenshotBase() {
-    @Test fun shot() {
-        io.github.adrianss31.lowfreqhunter.ui.timelineSyncMax = 0
-        capture("04b_sessione_async", false, 140) { Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latestId()) } }
-    }
-}
 class UiShot05Dossier : UiScreenshotBase() { @Test fun shot() = capture("05_dossier", false, 80) { Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) } } }
 class UiShot06Mappa : UiScreenshotBase() { @Test fun shot() = capture("06_mappa", false, 80) { Shell().apply { tab = Tab.MAP; mapSel = "m1" } } }
 class UiShot07SetupProg : UiScreenshotBase() { @Test fun shot() = capture("07_setup_programma", false, 80) { Shell().apply { tab = Tab.SETUP; setupOpen = "prog" } } }
