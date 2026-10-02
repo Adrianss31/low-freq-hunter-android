@@ -241,6 +241,10 @@ class UiScreenshotTest {
         v.draw(Canvas(bmp))
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
         log("  saved")
+        // in Robolectric la view resta agganciata anche dopo destroy: senza
+        // staccarla la composizione (e le sue animazioni) continuerebbe a girare
+        (v as android.view.ViewGroup).removeAllViews()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
         ctl.pause().stop().destroy()
     }
 
