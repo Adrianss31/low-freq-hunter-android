@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -424,6 +425,7 @@ private fun LiveSpectrum(
         Modifier
             .fillMaxWidth()
             .height(168.dp)
+            .graphicsLayer {}
             .pointerInput(specMax) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -588,7 +590,8 @@ private fun LiveWaterfall(img: ImageBitmap?, seq: Int, bands: List<BandCfg>) {
             .fillMaxWidth()
             .height(56.dp)
             .clip(RoundedCornerShape(4.dp))
-            .clipToBounds(),
+            .clipToBounds()
+            .graphicsLayer {},
     ) {
         drawRect(Lfh.WfBg)
         if (img != null) {
@@ -736,7 +739,7 @@ private fun SessionCard(settings: AppSettings, bus: MonitorBus.State, now: Long)
             }
             val inf = rememberInfiniteTransition(label = "cursor")
             val a by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "cursorA")
-            Canvas(Modifier.fillMaxSize()) {
+            Canvas(Modifier.fillMaxSize().graphicsLayer {}) {
                 drawRect(Lfh.Orange.copy(alpha = a), Offset(size.width - 2.dp.toPx(), 0f), Size(2.dp.toPx(), size.height))
             }
         }

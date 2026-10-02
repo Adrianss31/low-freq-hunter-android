@@ -51,6 +51,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -580,7 +581,7 @@ fun ArchiveScreen() {
 private fun BreathDot() {
     val inf = rememberInfiniteTransition(label = "breath")
     val a by inf.animateFloat(0.25f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "breathA")
-    Canvas(Modifier.size(16.dp)) {
+    Canvas(Modifier.size(16.dp).graphicsLayer {}) {
         drawCircle(Lfh.PaperDim, size.minDimension / 2 - 0.75.dp.toPx(), style = Stroke(1.5.dp.toPx()))
         drawCircle(Lfh.PaperDim.copy(alpha = a), 2.dp.toPx())
     }
