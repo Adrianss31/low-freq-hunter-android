@@ -27,6 +27,7 @@ jobs:
         with:
           gradle-version: "8.10.2"
       - name: Screenshot
+        timeout-minutes: 15
         env:
           LFH_SCREENSHOTS: "1"
         run: ./gradlew testReleaseUnitTest --tests '*UiScreenshotTest*'

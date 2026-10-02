@@ -58,6 +58,28 @@ class UiScreenshotTest {
     private val out = File("build/reports/screenshots").apply { mkdirs() }
     private val json = Json { encodeDefaults = true }
     private val rnd = Random(7)
+    private val progress = File(out, "progress.txt")
+
+    private fun log(msg: String) {
+        progress.appendText("${System.currentTimeMillis() % 100000} $msg\n")
+    }
+
+    /** Se qualcosa si pianta, salva gli stack di tutti i thread. */
+    private fun watchdog() {
+        Thread {
+            var n = 0
+            while (true) {
+                Thread.sleep(60_000)
+                n++
+                val sb = StringBuilder()
+                for ((t, st) in Thread.getAllStackTraces()) {
+                    sb.append("\n--- ${t.name} ${t.state}\n")
+                    st.take(40).forEach { sb.append("  at ").append(it).append('\n') }
+                }
+                File(out, "stacks_$n.txt").writeText(sb.toString())
+            }
+        }.apply { isDaemon = true }.start()
+    }
 
     private fun frame(t: Long, a: Double, b: Double): MonitorBus.SpectrumFrame {
         val binHz = 48000.0 / 32768
@@ -198,6 +220,7 @@ class UiScreenshotTest {
     }
 
     private fun shoot(name: String, shell: Shell, steps: Int = 60, live: Boolean = false) {
+        log("shoot $name")
         val ctl = Robolectric.buildActivity(ComponentActivity::class.java).setup()
         val act = ctl.get()
         Typefaces.init(act)
@@ -210,11 +233,14 @@ class UiScreenshotTest {
             }
             Thread.sleep(25)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+            if (i % 20 == 0) log("  step $i")
         }
+        log("  draw")
         val v = act.window.decorView
         val bmp = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
         v.draw(Canvas(bmp))
         File(out, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        log("  saved")
         ctl.pause().stop().destroy()
     }
 
@@ -222,8 +248,12 @@ class UiScreenshotTest {
     fun screens() {
         // solo su richiesta (workflow "UI screenshots"): lento e non è un controllo
         org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
+        watchdog()
+        log("seed")
         seed()
+        log("seedMap")
         seedMap()
+        log("seeded")
 
         liveBus(rec = true)
         shoot("01_monitor_rec", Shell(), steps = 80, live = true)
