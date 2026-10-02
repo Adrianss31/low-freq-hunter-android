@@ -501,7 +501,10 @@ private fun ClipList(b: SessionBundle) {
             }) { Sans(if (on) "■" else "▶", size = 13.sp, weight = FontWeight.SemiBold) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Mono("${fmtClockShort(clip.t * 1000)} · ${b.cfg.channelLabel(clip.band)} · ${clipSeconds(clip, b.session.sampleRate)} s", size = 11.sp, color = Lfh.Ink, spacing = 0.sp)
-                val peaks by produceState<FloatArray?>(null, clip.path) { value = withContext(Dispatchers.IO) { wavePeaks(clip.path) } }
+                val peaks by produceState<FloatArray?>(null, clip.path) {
+                    val computed = withContext(Dispatchers.IO) { wavePeaks(clip.path) }
+                    value = computed
+                }
                 Row(Modifier.fillMaxWidth().height(14.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
                     val pk = peaks ?: FloatArray(30) { 0.3f }
                     pk.forEachIndexed { j, h ->
