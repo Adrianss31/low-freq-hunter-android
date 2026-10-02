@@ -30,7 +30,7 @@ jobs:
         timeout-minutes: 30
         env:
           LFH_SCREENSHOTS: "1"
-        run: ./gradlew testReleaseUnitTest --tests '*UiScreenshotTest*'
+        run: ./gradlew testReleaseUnitTest --tests '*UiShot*'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

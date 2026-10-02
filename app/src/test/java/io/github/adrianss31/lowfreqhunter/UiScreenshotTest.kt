@@ -54,7 +54,7 @@ import kotlin.random.Random
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(application = Application::class, sdk = [34], qualifiers = "w400dp-h860dp-xxhdpi")
-class UiScreenshotTest {
+abstract class UiScreenshotBase {
 
     private val out = File("build/reports/screenshots").apply { mkdirs() }
     private val json = Json { encodeDefaults = true }
@@ -268,17 +268,23 @@ class UiScreenshotTest {
         liveBus(rec)
     }
 
-    private fun latestId() = runBlocking { LfhDb.get(ApplicationProvider.getApplicationContext()).dao().sessionsList().first().id }
+    protected fun latestId() = runBlocking { LfhDb.get(ApplicationProvider.getApplicationContext()).dao().sessionsList().first().id }
 
-    @Test fun s01_monitorRec() { prepare(true); shoot("01_monitor_rec", Shell(), 80, live = true) }
-    @Test fun s02_monitorEdit() { prepare(true); shoot("02_monitor_edit", Shell().apply { selBand = "A"; bandEdit = true }, 80, live = true) }
-    @Test fun s03_archivio() { prepare(false); shoot("03_archivio", Shell().apply { tab = Tab.ARCHIVE }, 160) }
-    @Test fun s04_sessione() { prepare(false); shoot("04_sessione", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latestId()) }, 140) }
-    @Test fun s05_dossier() { prepare(false); shoot("05_dossier", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) }, 80) }
-    @Test fun s06_mappa() { prepare(false); shoot("06_mappa", Shell().apply { tab = Tab.MAP; mapSel = "m1" }, 80) }
-    @Test fun s07_setupProg() { prepare(false); shoot("07_setup_programma", Shell().apply { tab = Tab.SETUP; setupOpen = "prog" }, 80) }
-    @Test fun s08_setupSens() { prepare(false); shoot("08_setup_sensori", Shell().apply { tab = Tab.SETUP; setupOpen = "sens" }, 80) }
-    @Test fun s09_setupSys() { prepare(false); shoot("09_setup_sistema", Shell().apply { tab = Tab.SETUP; setupOpen = "sys" }, 80) }
-    @Test fun s10_contesto() { prepare(false); shoot("10_contesto", Shell().apply { sheet = Sheet.Context }, 80) }
-    @Test fun s11_standby() { prepare(false); shoot("11_monitor_standby", Shell(), 60) }
+    protected fun capture(name: String, rec: Boolean, steps: Int, live: Boolean = false, shell: () -> Shell) {
+        prepare(rec)
+        shoot(name, shell(), steps, live)
+    }
 }
+
+// una classe per schermata: con forkEvery = 1 ognuna gira in una JVM nuova
+class UiShot01MonitorRec : UiScreenshotBase() { @Test fun shot() = capture("01_monitor_rec", true, 80, live = true) { Shell() } }
+class UiShot02MonitorEdit : UiScreenshotBase() { @Test fun shot() = capture("02_monitor_edit", true, 80, live = true) { Shell().apply { selBand = "A"; bandEdit = true } } }
+class UiShot03Archivio : UiScreenshotBase() { @Test fun shot() = capture("03_archivio", false, 160) { Shell().apply { tab = Tab.ARCHIVE } } }
+class UiShot04Sessione : UiScreenshotBase() { @Test fun shot() = capture("04_sessione", false, 140) { Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latestId()) } } }
+class UiShot05Dossier : UiScreenshotBase() { @Test fun shot() = capture("05_dossier", false, 80) { Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) } } }
+class UiShot06Mappa : UiScreenshotBase() { @Test fun shot() = capture("06_mappa", false, 80) { Shell().apply { tab = Tab.MAP; mapSel = "m1" } } }
+class UiShot07SetupProg : UiScreenshotBase() { @Test fun shot() = capture("07_setup_programma", false, 80) { Shell().apply { tab = Tab.SETUP; setupOpen = "prog" } } }
+class UiShot08SetupSens : UiScreenshotBase() { @Test fun shot() = capture("08_setup_sensori", false, 80) { Shell().apply { tab = Tab.SETUP; setupOpen = "sens" } } }
+class UiShot09SetupSys : UiScreenshotBase() { @Test fun shot() = capture("09_setup_sistema", false, 80) { Shell().apply { tab = Tab.SETUP; setupOpen = "sys" } } }
+class UiShot10Contesto : UiScreenshotBase() { @Test fun shot() = capture("10_contesto", false, 80) { Shell().apply { sheet = Sheet.Context } } }
+class UiShot11Standby : UiScreenshotBase() { @Test fun shot() = capture("11_monitor_standby", false, 60) { Shell() } }
