@@ -257,7 +257,7 @@ fun ArchiveScreen() {
                     }
                     val g = grids[latest.id]
                     val h0s = HourStats.hourStart(latest.startedAt / 1000)
-                    val n = ((endS - h0s) / 3600 + 1).toInt().coerceIn(1, 24)
+                    val n = ((endS - h0s + 3599) / 3600).toInt().coerceIn(1, 24)
                     Row(Modifier.fillMaxWidth().height(14.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         for (i in 0 until n) {
                             val m = g?.hours?.get(h0s + i * 3600L)

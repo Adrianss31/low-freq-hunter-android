@@ -4,6 +4,10 @@ name: UI screenshots
 # design senza un dispositivo. Gira sui branch di lavoro, non su main.
 on:
   workflow_dispatch:
+    inputs:
+      filter:
+        description: "Classi di test (pattern --tests)"
+        default: "*UiShot*"
   push:
     branches-ignore: [main]
     paths:
@@ -30,7 +34,7 @@ jobs:
         timeout-minutes: 30
         env:
           LFH_SCREENSHOTS: "1"
-        run: ./gradlew testReleaseUnitTest --tests '*UiShot*'
+        run: ./gradlew testReleaseUnitTest --tests "${{ inputs.filter || '*UiShot*' }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

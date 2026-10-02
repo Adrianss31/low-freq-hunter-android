@@ -56,12 +56,12 @@ import kotlin.random.Random
 @Config(application = Application::class, sdk = [34], qualifiers = "w400dp-h860dp-xxhdpi")
 abstract class UiScreenshotBase {
 
-    private val out = File("build/reports/screenshots").apply { mkdirs() }
+    protected val out = File("build/reports/screenshots").apply { mkdirs() }
     private val json = Json { encodeDefaults = true }
     private val rnd = Random(7)
     private val progress = File(out, "progress.txt")
 
-    private fun log(msg: String) {
+    protected fun log(msg: String) {
         progress.appendText("${System.currentTimeMillis() % 100000} $msg\n")
     }
 
@@ -122,7 +122,7 @@ abstract class UiScreenshotBase {
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-            add(Calendar.DAY_OF_YEAR, -40)
+            add(Calendar.DAY_OF_YEAR, -16)
         }
         var day = 0
         while (true) {
@@ -162,11 +162,11 @@ abstract class UiScreenshotBase {
                 )
                 dao.insertSamples(samples)
                 events.forEach { dao.insertEvent(it) }
-                for (k in 0 until 144) {
-                    val sm = samples[minOf(719, k * 5)]
+                for (k in 0 until 48) {
+                    val sm = samples[minOf(719, k * 15)]
                     val a = sm.lvJson.substringAfter("\"A\":").substringBefore(",").toDouble()
                     val b = sm.lvJson.substringAfter("\"B\":").substringBefore("}").toDouble()
-                    dao.insertSlice(SliceEntity(id, start / 1000 + k * 300L + 300, slice(a, b)))
+                    dao.insertSlice(SliceEntity(id, start / 1000 + k * 900L + 900, slice(a, b)))
                 }
                 if (rnd.nextDouble() < 0.4) dao.insertMarker(MarkerEntity("$id-m", id, start / 1000 + 7200, "nota: spento climatizzatore"))
                 if (rnd.nextDouble() < 0.2) {
@@ -259,6 +259,11 @@ abstract class UiScreenshotBase {
         }.onFailure { log("reset datastore: $it") }
     }
 
+    protected fun resetForRender() {
+        resetSingletons()
+        seed()
+    }
+
     private fun prepare(rec: Boolean) {
         org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
         org.robolectric.shadows.ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
@@ -277,6 +282,27 @@ abstract class UiScreenshotBase {
 }
 
 // una classe per schermata: con forkEvery = 1 ognuna gira in una JVM nuova
+class UiShot00Timeline : UiScreenshotBase() {
+    @Test fun shot() {
+        org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
+        resetForRender()
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val dao = LfhDb.get(ctx).dao()
+        val id = latestId()
+        val b = runBlocking { io.github.adrianss31.lowfreqhunter.data.SessionBundle.load(dao, id)!! }
+        val t0 = b.samples.first().t
+        val t1 = b.samples.last().t
+        log("timeline samples=${b.samples.size} levels0=${b.levels.firstOrNull()} t0=$t0 t1=$t1")
+        runCatching {
+            val bmp = io.github.adrianss31.lowfreqhunter.ui.SessionRender.timeline(b, 1100, 357, 2.75f, t0, t1)
+            var lit = 0
+            for (x in 0 until bmp.width step 4) for (y in 0 until bmp.height step 4) if (bmp.getPixel(x, y) != 0xFF10100E.toInt()) lit++
+            log("timeline lit=$lit")
+            File(out, "00_timeline.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }.onFailure { log("timeline FAIL ${it.stackTraceToString().take(2000)}") }
+    }
+}
+
 class UiShot01MonitorRec : UiScreenshotBase() { @Test fun shot() = capture("01_monitor_rec", true, 80, live = true) { Shell() } }
 class UiShot02MonitorEdit : UiScreenshotBase() { @Test fun shot() = capture("02_monitor_edit", true, 80, live = true) { Shell().apply { selBand = "A"; bandEdit = true } } }
 class UiShot03Archivio : UiScreenshotBase() { @Test fun shot() = capture("03_archivio", false, 160) { Shell().apply { tab = Tab.ARCHIVE } } }
