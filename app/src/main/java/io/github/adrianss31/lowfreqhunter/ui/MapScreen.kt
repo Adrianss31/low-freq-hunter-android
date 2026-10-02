@@ -263,12 +263,14 @@ private fun SurveyPanel(surveyId: String, settings: AppSettings) {
         if (c == Channels.VIB) p.vibDb
         else runCatching { json.decodeFromString<Map<String, Double>>(p.levelsJson)[c] }.getOrNull()
     // IDW su una griglia 72×54: pochi ms anche con decine di punti
-    val heat = remember(points, ch, mapSize) {
+    // la griglia è 72×54: una bitmap fissa stirata sul riquadro basta (e non
+    // dipende dalla misura del layout)
+    val heat = remember(points, ch) {
         val c = ch
-        if (c == null || mapSize.width <= 0) null
+        if (c == null) null
         else {
             val pts = points.mapNotNull { p -> valueOf(p, c)?.let { Idw.Point(p.x, p.y, it) } }
-            HeatmapRender.render(pts, mapSize.width / 2, mapSize.height / 2)
+            HeatmapRender.render(pts, 576, 432)
         }
     }
 
