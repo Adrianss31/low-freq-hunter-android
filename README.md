@@ -11,41 +11,55 @@ informativa.
 
 ## Funzioni
 
-- **Live** — spettro in tempo reale, waterfall, meter a segmenti per banda,
-  confronto A/B, sonificazione Geiger
-- **Notte** — log continuo con eventi a soglia (isteresi + durate minime),
-  spettrogramma persistito, marker "lo sento adesso", clip WAV sugli eventi,
-  gap di monitoraggio registrati; schermo spegnibile
-- **Canale V** — vibrazioni strutturali dall'accelerometro (dB rel 1 g)
-- **Programmazione** — avvio/stop automatico ogni notte (setAlarmClock +
-  activity-trampolino per l'accesso al microfono da background);
-  **registrazione continua** con uno o due spezzamenti giornalieri
-  (es. 21:00 e 07:00 → sessioni "Notte" 21–7 e "Giorno" 7–21)
-- **Log** — timeline, statistiche, export report PNG / CSV / JSON in
-  Documents/LowFreqHunter e via share sheet; **heatmap di ricorrenza**
-  (ora del giorno × notte sulle ultime sessioni: colore = livello massimo
-  rispetto alla soglia su scala −10…+10 dB — la soglia è il centro, si vede
-  anche il rumore che si avvicina senza superarla)
-- **Monitor dal PC** — dashboard web sulla LAN con live, archivio, centro
-  notifiche, heatmap di ricorrenza e modifica di tutte le impostazioni
-  dell'app dal browser (`/api/settings`, `/api/recurrence`); al salvataggio
-  la sessione in corso riparte subito coi nuovi parametri
-- **Mappa** — heatmap della casa per frequenza; pinch-zoom e mirino di
-  conferma: tocchi ≈ dove sei, rifinisci trascinando (movimento relativo,
-  niente dito grosso) e premi MISURA
-- **Sessioni unite per finestra** — le registrazioni avviate nella stessa
-  finestra giorno/notte (dagli spezzamenti o dalla programmazione, altrimenti
-  il giorno solare) proseguono la stessa sessione: stop e riprese, manuali o
-  automatici, restano un'unica registrazione con il buco documentato come gap
-- **Stima dB SPL** opzionale — offset tarato dall'utente su un riferimento
-  (fonometro o app); i report restano marcati come stima indicativa
-- Valori e grafici smussati: spettro e meter interpolati a 60 fps, livelli
-  testuali mediati ~1 s, frequenza dominante come mediana mobile (il motore
-  eventi e i dati registrati usano sempre i valori grezzi)
-- Bande dinamiche (1–8), soglie assolute in dBFS, batteria nei campioni,
-  esenzione ottimizzazioni batteria
-- UI ispirata a Teenage Engineering / Nothing: font dot-matrix (Doto),
-  pannelli piatti, feedback aptico su ogni interazione
+Interfaccia "capsula" (v1.0): corpo chiaro da strumento, display scuri
+incassati, un solo accento arancio per REC e per ciò che supera la soglia.
+Quattro schede in una capsula flottante, con il tasto **REC** sempre a portata
+di pollice; in testata le spie REC / PROG / PC e la pastiglia UPD quando c'è
+un aggiornamento.
+
+- **Monitor** — ascolto live (microfono locale in standby, quello del
+  servizio durante REC): lettura grande della banda selezionata, frequenza
+  dominante, spettro con le bande disegnate sopra e waterfall di 30 s. Le
+  bande (1–8, sempre etichettate per frequenza) sono tessere: tocca per aprire
+  il regolatore di centro, larghezza e soglia, oppure trascina direttamente
+  sullo spettro (orizzontale = centro, verticale = soglia). Durante REC compare
+  la scheda della sessione: spettrogramma, presenza per banda colorata per
+  intensità e **note con orario** ("spento climatizzatore"). Sotto, il
+  **contesto** (stanza, posizione, condizioni) salvato con ogni sessione.
+- **Archivio** — calendario mensile: una riga per giorno, metà giorno e metà
+  notte (con due spezzamenti segue i loro orari, altrimenti 09–21 / 21–09),
+  ogni cella è il livello massimo dell'ora rispetto alla soglia su scala
+  −12…+10 dB. Tocca per aprire la sessione, tieni premuto e scorri per
+  l'anteprima, trascina in orizzontale per cambiare mese; filtro per banda.
+  La sessione si apre in un foglio con timeline (zoom 2 h e scrubbing),
+  spettrogramma, riepilogo per banda, diario (note, interruzioni, eventi
+  lunghi), clip con forma d'onda, export PNG/JSON/CSV ed eliminazione.
+  Da qui anche il **dossier per LLM** (7/14 giorni o il mese, solo notti/giorni).
+  Gli aggregati orari stanno in una cache su file aggiornata in modo
+  incrementale, così il calendario non rilegge tutti i campioni.
+- **Mappa** — rilievi della casa per frequenza: tocchi ≈ dove sei, rifinisci
+  il mirino trascinando (movimento relativo), premi MISURA (10 s); zoom con le
+  dita o con −/+, piantina opzionale, export PNG.
+- **Setup** — moduli a fisarmonica: programma con quadrante 24 h trascinabile
+  (manuale / notturno / continuo con uno o due spezzamenti), eventi
+  (apertura, chiusura, isteresi, pulsanti), sensori e analisi (FFT, spettro,
+  vibrazioni, stima SPL), clip audio, sistema (aggiornamenti, Monitor dal PC,
+  esenzione batteria).
+
+Sotto il cofano, invariati: sorgente **UNPROCESSED** (niente passa-alto/AGC
+di sistema sulle basse frequenze), registrazione a schermo spento nel
+foreground service, canale **V** dall'accelerometro, programmazione con
+setAlarmClock, **sessioni unite per finestra** giorno/notte (stop e riprese
+restano una sessione con il buco documentato come gap), clip WAV sugli eventi,
+**Monitor dal PC** (dashboard web in LAN con centro notifiche, ricorrenza e
+modifica delle impostazioni), widget home. Smussatura "a due velocità": spettro
+e meter interpolati a 60 fps, cifre mediate ~1 s; motore eventi e dati
+registrati usano sempre i valori grezzi.
+
+Rimossi nella v1.0 rispetto alle versioni 0.x: sonificazione Geiger, freeze e
+confronto A/B della vecchia scheda Live, marker "lo sento adesso" dall'app
+(sostituito dalle note con orario; resta dalla dashboard PC), heatmap di
+ricorrenza sulle ultime 14 sessioni (sostituita dal calendario mensile).
 
 ## Build
 
@@ -72,12 +86,12 @@ calibrati: misura indicativa, non fonometria certificata.
 
 ## Dossier per LLM
 
-In **Notte**, prima di registrare, salva stanza, posizione/orientamento e condizioni
+Nel **Monitor**, prima di registrare, salva stanza, posizione/orientamento e condizioni
 (finestre, impianti). Il contesto e il dispositivo vengono fotografati nella nuova
 sessione; le sessioni precedenti mantengono i propri metadati, o "sconosciuto".
 Durante REC puoi aggiungere note e azioni con orario, ad esempio "spento climatizzatore".
 
-In **Log → dossier per LLM** seleziona da 1 a 31 sessioni concluse e crea lo ZIP.
+In **Archivio → DOSSIER** scegli il periodo (7 o 14 giorni, o il mese visibile; al massimo 31 sessioni concluse) e crea lo ZIP.
 La condivisione Android permette di salvarlo o caricarlo nella chat scelta. L'app
 non invia dati a servizi AI. Campioni al secondo e audio sono opzioni separate,
 entrambe disattivate all'inizio; con audio vengono incluse le prime tre clip di
@@ -94,7 +108,7 @@ una stessa frequenza non implica una stessa sorgente fisica.
 ## Aggiornamenti dall'app
 
 All'apertura viene controllata l'ultima release stabile del repository GitHub;
-in **Setup → Aggiornamenti** puoi ripetere il controllo. **Aggiorna** scarica
+in **Setup → Sistema** puoi ripetere il controllo (la pastiglia UPD in testata porta lì). **Aggiorna** scarica
 `lowfreqhunter.apk` in cache e apre la conferma d'installazione di Android.
 Alla prima installazione Android può richiedere "Consenti da questa origine";
 al ritorno l'app prosegue con l'installazione. Se annulli puoi riprovare.

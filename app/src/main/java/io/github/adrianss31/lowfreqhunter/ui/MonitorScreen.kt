@@ -197,7 +197,6 @@ fun MonitorScreen() {
         }
     }
 
-    val smooth = rememberSmoothedFrame(frame, frame != null)
     val textSmoother = remember { TextLevels() }
     val txt: Map<String, Double> = frame?.let { textSmoother.push(it, bands) } ?: emptyMap()
     val dom = if (bus.running) bus.domHz else localDom
@@ -246,65 +245,15 @@ fun MonitorScreen() {
                 }
             }
 
-            // spettro: tocca una banda per selezionarla, trascina in
-            // orizzontale per il centro e in verticale per la soglia
-            val bandsNow by rememberUpdatedState(bands)
-            val selNow by rememberUpdatedState(selB)
-            val editNow by rememberUpdatedState(edit)
-            Canvas(
-                Modifier
-                    .fillMaxWidth()
-                    .height(168.dp)
-                    .pointerInput(specMax) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val w = size.width.toFloat()
-                            val h = size.height.toFloat()
-                            val f = down.position.x / w * specMax
-                            val hit = bandsNow
-                                .sortedBy { abs(it.center - f) }
-                                .firstOrNull { abs(f - it.center) <= maxOf(it.width + 2, specMax * 0.04) }
-                            val tgt = hit ?: if (editNow) selNow else null
-                            if (tgt == null) return@awaitEachGesture
-                            if (hit != null && !(editNow && selNow?.id == hit.id)) {
-                                Haptics.tap(view)
-                                shell.selBand = hit.id
-                                shell.bandEdit = true
-                            }
-                            var axis = 0
-                            var lastC = tgt.center
-                            var lastT = tgt.thr
-                            while (true) {
-                                val ev = awaitPointerEvent()
-                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!ch.pressed) break
-                                val d = ch.position - down.position
-                                if (axis == 0) {
-                                    if (d.getDistance() < viewConfiguration.touchSlop) continue
-                                    axis = if (abs(d.x) > abs(d.y)) 1 else 2
-                                }
-                                ch.consume()
-                                if (axis == 1) {
-                                    val c = (tgt.center + d.x / w * specMax).roundToInt().toDouble().coerceIn(10.0, specMax)
-                                    if (c != lastC) {
-                                        lastC = c
-                                        Haptics.tick(view)
-                                        patchBand(tgt.id) { it.copy(center = c) }
-                                    }
-                                } else {
-                                    val t = (tgt.thr - d.y / (h - 18.dp.toPx()) * 70).roundToInt().toDouble().coerceIn(-100.0, -20.0)
-                                    if (t != lastT) {
-                                        lastT = t
-                                        Haptics.tick(view)
-                                        patchBand(tgt.id) { it.copy(thr = t) }
-                                    }
-                                }
-                            }
-                        }
-                    },
-            ) {
-                drawLiveSpectrum(smooth, specMax, bands, txt, if (edit) selB?.id else null)
-            }
+            LiveSpectrum(
+                frame, specMax, bands, txt, selB, edit,
+                onSelect = { id ->
+                    Haptics.tap(view)
+                    shell.selBand = id
+                    shell.bandEdit = true
+                },
+                onPatch = { id, f -> patchBand(id, f) },
+            )
             Mono(
                 if (edit) "TRASCINA SULLO SPETTRO O REGOLA QUI SOTTO" else "TOCCA UNA BANDA PER REGOLARLA",
                 size = 9.sp, color = if (edit) Lfh.Orange else Lfh.PaperFaint,
@@ -448,6 +397,79 @@ private sealed interface BandTile {
     data class Band(val b: BandCfg) : BandTile
     data object Vib : BandTile
     data object Add : BandTile
+}
+
+/** Spettro live interpolato a 60 fps: ricomposto da solo, non tutta la schermata. */
+@Composable
+private fun LiveSpectrum(
+    frame: MonitorBus.SpectrumFrame?,
+    specMax: Double,
+    bands: List<BandCfg>,
+    levels: Map<String, Double>,
+    selB: BandCfg?,
+    edit: Boolean,
+    onSelect: (String) -> Unit,
+    onPatch: (String, (BandCfg) -> BandCfg) -> Unit,
+) {
+    // spettro: tocca una banda per selezionarla, trascina in
+    // orizzontale per il centro e in verticale per la soglia
+    val view = LocalView.current
+    val smooth = rememberSmoothedFrame(frame, frame != null)
+    val bandsNow by rememberUpdatedState(bands)
+    val selNow by rememberUpdatedState(selB)
+    val editNow by rememberUpdatedState(edit)
+    val select by rememberUpdatedState(onSelect)
+    val patch by rememberUpdatedState(onPatch)
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(168.dp)
+            .pointerInput(specMax) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val w = size.width.toFloat()
+                    val h = size.height.toFloat()
+                    val f = down.position.x / w * specMax
+                    val hit = bandsNow
+                        .sortedBy { abs(it.center - f) }
+                        .firstOrNull { abs(f - it.center) <= maxOf(it.width + 2, specMax * 0.04) }
+                    val tgt = hit ?: if (editNow) selNow else null
+                    if (tgt == null) return@awaitEachGesture
+                    if (hit != null && !(editNow && selNow?.id == hit.id)) select(hit.id)
+                    var axis = 0
+                    var lastC = tgt.center
+                    var lastT = tgt.thr
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!ch.pressed) break
+                        val d = ch.position - down.position
+                        if (axis == 0) {
+                            if (d.getDistance() < viewConfiguration.touchSlop) continue
+                            axis = if (abs(d.x) > abs(d.y)) 1 else 2
+                        }
+                        ch.consume()
+                        if (axis == 1) {
+                            val c = (tgt.center + d.x / w * specMax).roundToInt().toDouble().coerceIn(10.0, specMax)
+                            if (c != lastC) {
+                                lastC = c
+                                Haptics.tick(view)
+                                patch(tgt.id) { it.copy(center = c) }
+                            }
+                        } else {
+                            val t = (tgt.thr - d.y / (h - 18.dp.toPx()) * 70).roundToInt().toDouble().coerceIn(-100.0, -20.0)
+                            if (t != lastT) {
+                                lastT = t
+                                Haptics.tick(view)
+                                patch(tgt.id) { it.copy(thr = t) }
+                            }
+                        }
+                    }
+                }
+            },
+    ) {
+        drawLiveSpectrum(smooth, specMax, bands, levels, if (edit) selB?.id else null)
+    }
 }
 
 // ── Disegno dello spettro live ───────────────────────────────────────────

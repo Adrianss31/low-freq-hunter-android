@@ -159,8 +159,8 @@ fun rememberBlink(active: Boolean, periodMs: Long = 500): Boolean {
 fun dockClearance() = 124.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
 @Composable
-fun AppShell() {
-    val shell = remember { Shell() }
+fun AppShell(initial: Shell? = null) {
+    val shell = remember { initial ?: Shell() }
     val ctx = LocalContext.current
     LaunchedEffect(Unit) { if (AppUpdater.state.value.message.isEmpty()) AppUpdater.check(ctx) }
 
