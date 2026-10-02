@@ -220,12 +220,12 @@ class UiScreenshotTest {
         MonitorBus.notes.value = listOf(Pair(s0 + 40 * 60, "spento climatizzatore"))
     }
 
-    private lateinit var act: ComponentActivity
-
     private fun shoot(name: String, shell: Shell, steps: Int = 60, live: Boolean = false) {
         log("shoot $name")
-        // una sola attività: a ogni scatto cambia il contenuto (key = stato nuovo)
-        act.setContent { LfhTheme { key(name) { AppShell(shell) } } }
+        val ctl = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+        val act = ctl.get()
+        Typefaces.init(act)
+        act.setContent { LfhTheme { AppShell(shell) } }
         var t = System.currentTimeMillis()
         repeat(steps) { i ->
             if (live && i % 5 == 0) {
@@ -244,35 +244,41 @@ class UiScreenshotTest {
         log("  saved")
     }
 
-    @Test
-    fun screens() {
-        // solo su richiesta (workflow "UI screenshots"): lento e non è un controllo
-        org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
-        watchdog()
-        // frame a ~60 Hz come su un telefono (di default Robolectric ne fa uno al ms)
-        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
-        log("seed")
-        seed()
-        log("seedMap")
-        seedMap()
-        log("seeded")
-        act = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
-        Typefaces.init(act)
-
-        liveBus(rec = true)
-        shoot("01_monitor_rec", Shell(), steps = 80, live = true)
-        shoot("02_monitor_edit", Shell().apply { selBand = "A"; bandEdit = true }, steps = 80, live = true)
-
-        liveBus(rec = false)
-        val latest = runBlocking { LfhDb.get(ApplicationProvider.getApplicationContext()).dao().sessionsList().first() }
-        shoot("06_mappa", Shell().apply { tab = Tab.MAP; mapSel = "m1" }, steps = 80)
-        shoot("07_setup_programma", Shell().apply { tab = Tab.SETUP; setupOpen = "prog" }, steps = 80)
-        shoot("08_setup_sensori", Shell().apply { tab = Tab.SETUP; setupOpen = "sens" }, steps = 80)
-        shoot("09_setup_sistema", Shell().apply { tab = Tab.SETUP; setupOpen = "sys" }, steps = 80)
-        shoot("10_contesto", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Context }, steps = 80)
-        shoot("04_sessione", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Session(latest.id) }, steps = 140)
-        shoot("05_dossier", Shell().apply { tab = Tab.SETUP; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) }, steps = 80)
-        shoot("03_archivio", Shell().apply { tab = Tab.ARCHIVE }, steps = 160)
-        shoot("11_monitor_standby", Shell(), steps = 60)
+    /** I singleton di DB e impostazioni puntano al contesto del test precedente: azzerati. */
+    private fun resetSingletons() {
+        for ((cls, field) in listOf(
+            "io.github.adrianss31.lowfreqhunter.data.LfhDb" to "instance",
+            "io.github.adrianss31.lowfreqhunter.data.SettingsRepo" to "instance",
+        )) runCatching {
+            Class.forName(cls).getDeclaredField(field).apply { isAccessible = true }.set(null, null)
+        }.onFailure { log("reset $cls: $it") }
+        runCatching {
+            val d = Class.forName("io.github.adrianss31.lowfreqhunter.data.SettingsKt")
+                .getDeclaredField("dataStore\$delegate").apply { isAccessible = true }.get(null)
+            d.javaClass.getDeclaredField("INSTANCE").apply { isAccessible = true }.set(d, null)
+        }.onFailure { log("reset datastore: $it") }
     }
+
+    private fun prepare(rec: Boolean) {
+        org.junit.Assume.assumeTrue(System.getenv("LFH_SCREENSHOTS") == "1")
+        org.robolectric.shadows.ShadowChoreographer.setFrameDelay(Duration.ofMillis(16))
+        resetSingletons()
+        seed()
+        seedMap()
+        liveBus(rec)
+    }
+
+    private fun latestId() = runBlocking { LfhDb.get(ApplicationProvider.getApplicationContext()).dao().sessionsList().first().id }
+
+    @Test fun s01_monitorRec() { prepare(true); shoot("01_monitor_rec", Shell(), 80, live = true) }
+    @Test fun s02_monitorEdit() { prepare(true); shoot("02_monitor_edit", Shell().apply { selBand = "A"; bandEdit = true }, 80, live = true) }
+    @Test fun s03_archivio() { prepare(false); shoot("03_archivio", Shell().apply { tab = Tab.ARCHIVE }, 160) }
+    @Test fun s04_sessione() { prepare(false); shoot("04_sessione", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Session(latestId()) }, 140) }
+    @Test fun s05_dossier() { prepare(false); shoot("05_dossier", Shell().apply { tab = Tab.ARCHIVE; sheet = Sheet.Dossier(monthKeyOf(System.currentTimeMillis())) }, 80) }
+    @Test fun s06_mappa() { prepare(false); shoot("06_mappa", Shell().apply { tab = Tab.MAP; mapSel = "m1" }, 80) }
+    @Test fun s07_setupProg() { prepare(false); shoot("07_setup_programma", Shell().apply { tab = Tab.SETUP; setupOpen = "prog" }, 80) }
+    @Test fun s08_setupSens() { prepare(false); shoot("08_setup_sensori", Shell().apply { tab = Tab.SETUP; setupOpen = "sens" }, 80) }
+    @Test fun s09_setupSys() { prepare(false); shoot("09_setup_sistema", Shell().apply { tab = Tab.SETUP; setupOpen = "sys" }, 80) }
+    @Test fun s10_contesto() { prepare(false); shoot("10_contesto", Shell().apply { sheet = Sheet.Context }, 80) }
+    @Test fun s11_standby() { prepare(false); shoot("11_monitor_standby", Shell(), 60) }
 }
