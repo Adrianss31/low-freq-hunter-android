@@ -13,7 +13,6 @@ import io.github.adrianss31.lowfreqhunter.MainActivity
 import io.github.adrianss31.lowfreqhunter.data.*
 import io.github.adrianss31.lowfreqhunter.server.LanServer
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 
 /** Optional LAN access has its own lifetime and never opens the microphone. */
@@ -33,6 +32,12 @@ class LanDashboardService : Service() {
     private var wifi: android.net.wifi.WifiManager.WifiLock?=null
     private var wake: PowerManager.WakeLock?=null
 
+    private val networkCallback=object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) { updateUrl() }
+        override fun onLost(network: android.net.Network) { updateUrl() }
+        override fun onLinkPropertiesChanged(network: android.net.Network, props: android.net.LinkProperties) { updateUrl() }
+    }
+    private var networkRegistered=false
     override fun onBind(intent: Intent?): IBinder?=null
     override fun onCreate() {
         super.onCreate()
@@ -41,6 +46,10 @@ class LanDashboardService : Service() {
         val notification=notification("Avvio della dashboard in rete locale")
         if(Build.VERSION.SDK_INT>=34) startForeground(NOTIFICATION,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         else startForeground(NOTIFICATION,notification)
+        runCatching {
+            (getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).registerDefaultNetworkCallback(networkCallback)
+            networkRegistered=true
+        }
     }
     override fun onStartCommand(intent: Intent?,flags: Int,startId: Int): Int {
         if(!observing) {
@@ -79,7 +88,8 @@ class LanDashboardService : Service() {
             stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
         }
     }
-    private fun updateUrl() {
+    @Synchronized private fun updateUrl() {
+        if(server==null)return
         val url=bound?.let { b -> LanServer.deviceIp()?.let { "http://$it:${b.port}/?k=${b.token}" } }
         MonitorBus.state.update { it.copy(lanUrl=url) }
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION,
@@ -96,5 +106,8 @@ class LanDashboardService : Service() {
         wake?.let { if(it.isHeld) it.release() };wake=null
         MonitorBus.state.update { it.copy(lanUrl=null) }
     }
-    override fun onDestroy() { closeServer();scope.cancel();super.onDestroy() }
+    override fun onDestroy() {
+        if(networkRegistered) runCatching { (getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(networkCallback) }
+        closeServer();scope.cancel();super.onDestroy()
+    }
 }

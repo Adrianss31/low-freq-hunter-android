@@ -1,50 +1,384 @@
 <!doctype html>
 <html lang="it">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
-<title>LFH · Monitor dal PC</title>
-<style>body{margin:0;background:#d9d7d0;color:#1b1b19;font-family:system-ui,sans-serif} [hidden]{display:none!important}</style>
-</head>
-<body>
-<main class="dashboard">
-<header class="header rise">
-  <div class="logo"><strong>LFH</strong><span>MONITOR DAL PC</span></div>
-  <div class="status-lights"><span><i id="connectionLed" class="led offline"></i><b id="connectionLabel">TEL OFFLINE</b></span><span><i id="recLed" class="led dim"></i><b id="recLabel">REC FERMO</b></span><span><i class="led dim"></i><b id="batteryLabel">BATT —</b></span><span><i id="gapLed" class="led dim"></i><b id="gapLabel">0 BUCHI</b></span></div>
-  <div class="header-actions"><button id="alertsButton" class="raised">AVVISI</button><button id="bandsButton" class="raised">BANDE</button></div>
-</header>
-<section class="live-screen screen rise" aria-label="Spettro live">
-  <div class="live-heading"><div><b>SPETTRO LIVE</b><i id="liveDot" class="led offline"></i><strong id="liveStatus">NON RAGGIUNGIBILE</strong><span id="liveDetail">IN ATTESA DEL TELEFONO</span></div><span class="live-help">0–250 HZ · ARANCIO = PICCHI RECENTI · TRATTEGGIO = SOGLIA</span></div>
-  <canvas id="liveSpectrum" aria-label="Spettro corrente da zero a 250 hertz"></canvas>
-</section>
-<section class="session-row rise" aria-label="Notte selezionata">
-  <button id="previousNight" class="raised night-nav" aria-label="Notte precedente" disabled>‹</button>
-  <div class="session-title"><span id="sessionKind">IN ATTESA</span><h1 id="sessionDate">Le tue registrazioni</h1></div>
-  <button id="nextNight" class="raised night-nav" aria-label="Notte successiva" disabled>›</button>
-  <div class="session-stats"><div><label>CON RUMORE</label><p><b id="noiseValue">—</b><span id="noiseCompare"></span></p></div><div><label>INIZIO</label><p><b id="startValue">—</b><span id="startCompare"></span></p></div><div><label>FINE</label><p><b id="endValue">—</b><span id="endCompare"></span></p></div><div><label>PICCO DBFS</label><p><b id="peakValue">—</b><span id="peakCompare"></span></p></div></div>
-  <div class="export-buttons"><button id="exportReport" class="raised orange" disabled>REPORT</button><button id="exportPng" class="raised" disabled>PNG VISTA</button><button id="exportCsv" class="raised" disabled>CSV</button></div>
-</section>
-<section class="spectrogram-screen screen rise" aria-label="Esplora lo spettrogramma della notte">
-  <div class="toolbar"><div class="plot-title"><b>SPETTROGRAMMA</b><span id="viewRange">21:00 → 09:00 · 20–200 HZ</span></div><button id="resetZoom" class="outline-chip" hidden>TUTTA LA NOTTE ✕</button><span class="spacer"></span><div class="tool"><label>HZ</label><div id="frequencyPresets" class="segmented"></div></div><div class="tool"><label>COLORE</label><div class="segmented"><button data-palette="caldo" title="Caldo" aria-label="Palette calda"><i class="palette caldo"></i></button><button data-palette="arancio" title="Arancio" aria-label="Palette arancio"><i class="palette arancio"></i></button><button data-palette="grigio" title="Grigio" aria-label="Palette grigia"><i class="palette grigio"></i></button></div></div><div class="contrast tool"><button id="autoContrast" class="segment selected">AUTO</button><span id="contrastMin">−100</span><i id="contrastBar" class="contrast-bar" data-palette="caldo"></i><span id="contrastMax">−45</span><span id="manualContrast" hidden><input id="minSlider" aria-label="Contrasto minimo dBFS" type="range" min="-110" max="-60" value="-100"><input id="maxSlider" aria-label="Contrasto massimo dBFS" type="range" min="-70" max="-30" value="-45"></span></div></div>
-  <p id="loadState" class="load-state" role="status">Collegamento al telefono…</p>
-  <div class="plot-grid">
-    <span class="row-label overview-cell" hidden>NOTTE</span><canvas id="overview" class="overview-cell" hidden aria-label="Panoramica della notte, trascina per scorrere"></canvas><span id="overviewShare" class="side-label overview-cell" hidden>VISTA</span>
-    <span class="row-label">EVENTI</span><canvas id="eventLanes" aria-label="Eventi e interruzioni"></canvas><span class="side-label gap-key">⚠ BUCO DATI</span>
-    <canvas id="frequencyAxis" aria-label="Asse delle frequenze"></canvas><div class="waterfall-container"><canvas id="waterfall" aria-label="Spettrogramma storico, trascina per ingrandire"></canvas><div id="hoverChip" class="hover-chip" hidden><span id="hoverTime"></span><b id="hoverHz"></b><b id="hoverDb"></b></div><button id="lockedCursor" class="locked-cursor" hidden></button></div><div class="profile-container"><canvas id="profileCanvas" aria-label="Profilo spettrale medio e al cursore"></canvas><span>PROFILO · GRIGIO = MEDIA DELLA VISTA</span></div>
-    <span class="row-label db-label">DBFS</span><canvas id="levelsCanvas" aria-label="Livelli per banda nel tempo"></canvas><div id="levelLegend" class="level-legend"></div>
-  </div>
-  <div class="chart-help"><span>TRASCINA = INGRANDISCI</span><span>ROTELLA = ZOOM</span><span>← → = SCORRI</span><span>CLIC = FISSA CURSORE</span><span>DOPPIO CLIC / ESC = TUTTA LA NOTTE</span><span>[ ] = NOTTE PREC./SUCC.</span></div>
-  <div class="data-detail">STORICO 20–200 HZ · 64 INTERVALLI · MEDIE DI CIRCA 30 S · DBFS</div>
-</section>
-<section class="bottom-row rise">
-  <div class="diary screen"><h2>ULTIME 15 NOTTI · C’È UNO SCHEMA?</h2><div class="insights"><div><label>NOTTI CON RUMORE</label><b id="insightNights">—</b><span id="insightNightsDetail">in attesa dei dati</span></div><div><label>DI SOLITO</label><b id="insightStart">—</b><span id="insightEnd">in attesa dei dati</span></div><div><label>MEDIA A NOTTE</label><b id="insightAverage">—</b><span>durata degli eventi audio</span></div></div><div class="heatmap"><div class="heatmap-heading"><span></span><div><span>21</span><span>00</span><span>03</span><span>06</span></div><span>RUMORE</span></div><div class="heatmap-body"><div id="nightRows"></div><i id="nightIndicator" hidden></i></div></div></div>
-  <aside class="quality"><h2>I DATI SONO AFFIDABILI?</h2><div class="quality-row"><i></i><span>Collegamento</span><b id="reliabilityConnection">—</b></div><div class="quality-row"><i class="orange-led"></i><span>Registrazione</span><b id="reliabilityRecording">—</b></div><div class="quality-row"><i></i><span>Buchi stanotte</span><b id="reliabilityGaps">—</b></div><div class="quality-row"><i></i><span>Batteria telefono</span><b id="reliabilityBattery">—</b></div><div class="quality-row"><i></i><span>Spazio libero</span><b id="reliabilitySpace">—</b></div><p id="qualityError" class="quality-error" role="status"></p></aside>
-</section>
-<footer class="secondary-actions"><button id="markerButton">▲ LO SENTO ADESSO</button><button id="sessionExports">EXPORT DELLE SESSIONI</button><button id="advancedButton">IMPOSTAZIONI AVANZATE</button><span>DATI LOCALI · AVVISI IN QUESTA PAGINA</span></footer><div id="sessionDownloads" class="session-downloads" hidden></div>
-</main>
-<div id="backdrop" class="backdrop" hidden></div>
-<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true"><div class="drawer-heading"><h2 id="drawerTitle">AVVISI</h2><button id="drawerClose" class="raised" aria-label="Chiudi pannello">✕</button></div><div class="drawer-scroll"><div id="alertsContent"><p class="drawer-intro">Avvisi visibili qui, mentre questa pagina è aperta.</p><div id="alertToggles"></div><div class="mute"><label>SILENZIA TUTTO</label><div class="mute-options"><button data-mute="0">ATTIVI</button><button data-mute="30">30 MIN</button><button data-mute="60">1 ORA</button><button data-mute="480">8 ORE</button></div><p id="muteStatus"></p></div><div id="alertHistory" class="alert-history" aria-live="polite"></div></div><div id="bandsContent" hidden><p class="drawer-intro">Le modifiche restano in bozza. Salvare applica le bande al telefono e apre una nuova sessione se i parametri cambiano.</p><div id="bandCards"></div></div><div id="advancedContent" hidden><p class="drawer-intro">Controlli della registrazione e dei sensori sul telefono.</p><div id="advancedForm"></div><button id="saveAdvanced" class="raised orange">SALVA SUL TELEFONO</button></div><p id="settingsStatus" class="settings-status" role="status"></p></div><div id="bandFooter" class="drawer-footer" hidden><button id="cancelBands" class="raised">ANNULLA</button><button id="saveBands" class="raised orange">SALVA SUL TELEFONO</button></div></aside>
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script>
-(function(){const k=encodeURIComponent(new URLSearchParams(location.search).get('k')||'');const style=document.createElement('style');style.textContent=['Geist','Geist Mono','Doto'].map((name,i)=>'@font-face{font-family:"'+name+'";src:url("/fonts/'+['geist','geist_mono','doto'][i]+'.ttf?k='+k+'");font-weight:100 900;font-display:swap}').join('');document.head.append(style);const css=document.createElement('link');css.rel='stylesheet';css.href='/dashboard.css?k='+k;document.head.append(css);['dashboard-model.js','dashboard-render.js','dashboard.js'].reduce((p,file)=>p.then(()=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='/'+file+'?k='+k;s.onload=resolve;s.onerror=reject;document.body.append(s);})),Promise.resolve()).catch(()=>{document.getElementById('loadState').textContent='Dashboard non caricata. Riapri l’indirizzo mostrato dal telefono.';});})();
-</script>
-</body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>LFH · Monitor dal PC</title>
+    <style>
+      body {
+        margin: 0;
+        background: #d9d7d0;
+        color: #1b1b19;
+        font-family: system-ui, sans-serif;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="dashboard">
+      <header class="header rise">
+        <div class="logo"><strong>LFH</strong><span>MONITOR DAL PC</span></div>
+        <div class="status-lights">
+          <span
+            ><i id="connectionLed" class="led offline"></i
+            ><b id="connectionLabel">TEL OFFLINE</b></span
+          ><span
+            ><i id="recLed" class="led dim"></i
+            ><b id="recLabel">REC FERMO</b></span
+          ><span><i class="led dim"></i><b id="batteryLabel">BATT —</b></span
+          ><span
+            ><i id="gapLed" class="led dim"></i
+            ><b id="gapLabel">0 BUCHI</b></span
+          >
+        </div>
+        <div class="header-actions">
+          <button id="alertsButton" class="raised">AVVISI</button
+          ><button id="bandsButton" class="raised">BANDE</button>
+        </div>
+      </header>
+      <section class="live-screen screen rise" aria-label="Spettro live">
+        <div class="live-heading">
+          <div>
+            <b>SPETTRO LIVE</b><i id="liveDot" class="led offline"></i
+            ><strong id="liveStatus">NON RAGGIUNGIBILE</strong
+            ><span id="liveDetail">IN ATTESA DEL TELEFONO</span>
+          </div>
+          <span class="live-help"
+            >0–250 HZ · ARANCIO = PICCHI RECENTI · TRATTEGGIO = SOGLIA</span
+          >
+        </div>
+        <canvas
+          id="liveSpectrum"
+          aria-label="Spettro corrente da zero a 250 hertz"
+        ></canvas>
+      </section>
+      <section class="session-row rise" aria-label="Notte selezionata">
+        <button
+          id="previousNight"
+          class="raised night-nav"
+          aria-label="Notte precedente"
+          disabled
+        >
+          ‹
+        </button>
+        <div class="session-title">
+          <span id="sessionKind">IN ATTESA</span>
+          <h1 id="sessionDate">Le tue registrazioni</h1>
+        </div>
+        <button
+          id="nextNight"
+          class="raised night-nav"
+          aria-label="Notte successiva"
+          disabled
+        >
+          ›
+        </button>
+        <div class="session-stats">
+          <div>
+            <label>CON RUMORE</label>
+            <p><b id="noiseValue">—</b><span id="noiseCompare"></span></p>
+          </div>
+          <div>
+            <label>INIZIO</label>
+            <p><b id="startValue">—</b><span id="startCompare"></span></p>
+          </div>
+          <div>
+            <label>FINE</label>
+            <p><b id="endValue">—</b><span id="endCompare"></span></p>
+          </div>
+          <div>
+            <label>PICCO DBFS</label>
+            <p><b id="peakValue">—</b><span id="peakCompare"></span></p>
+          </div>
+        </div>
+        <div class="export-buttons">
+          <button id="exportReport" class="raised orange" disabled>
+            REPORT</button
+          ><button id="exportPng" class="raised" disabled>PNG VISTA</button
+          ><button id="exportCsv" class="raised" disabled>CSV</button>
+        </div>
+      </section>
+      <section
+        class="spectrogram-screen screen rise"
+        aria-label="Esplora lo spettrogramma della notte"
+      >
+        <div class="toolbar">
+          <div class="plot-title">
+            <b>SPETTROGRAMMA</b
+            ><span id="viewRange">21:00 → 09:00 · 20–200 HZ</span>
+          </div>
+          <button id="resetZoom" class="outline-chip" hidden>
+            TUTTA LA NOTTE ✕</button
+          ><span class="spacer"></span>
+          <div class="tool">
+            <label>HZ</label>
+            <div id="frequencyPresets" class="segmented"></div>
+          </div>
+          <div class="tool">
+            <label>COLORE</label>
+            <div class="segmented">
+              <button
+                data-palette="caldo"
+                title="Caldo"
+                aria-label="Palette calda"
+              >
+                <i class="palette caldo"></i></button
+              ><button
+                data-palette="arancio"
+                title="Arancio"
+                aria-label="Palette arancio"
+              >
+                <i class="palette arancio"></i></button
+              ><button
+                data-palette="grigio"
+                title="Grigio"
+                aria-label="Palette grigia"
+              >
+                <i class="palette grigio"></i>
+              </button>
+            </div>
+          </div>
+          <div class="contrast tool">
+            <button id="autoContrast" class="segment selected">AUTO</button
+            ><span id="contrastMin">−100</span
+            ><i id="contrastBar" class="contrast-bar" data-palette="caldo"></i
+            ><span id="contrastMax">−45</span
+            ><span id="manualContrast" hidden
+              ><input
+                id="minSlider"
+                aria-label="Contrasto minimo dBFS"
+                type="range"
+                min="-110"
+                max="-60"
+                value="-100" /><input
+                id="maxSlider"
+                aria-label="Contrasto massimo dBFS"
+                type="range"
+                min="-70"
+                max="-30"
+                value="-45"
+            /></span>
+          </div>
+        </div>
+        <p id="loadState" class="load-state" role="status">
+          Collegamento al telefono…
+        </p>
+        <div class="plot-grid">
+          <span class="row-label overview-cell" hidden>NOTTE</span
+          ><canvas
+            id="overview"
+            class="overview-cell"
+            hidden
+            aria-label="Panoramica della notte, trascina per scorrere"
+          ></canvas
+          ><span id="overviewShare" class="side-label overview-cell" hidden
+            >VISTA</span
+          >
+          <span class="row-label">EVENTI</span
+          ><canvas id="eventLanes" aria-label="Eventi e interruzioni"></canvas
+          ><span class="side-label gap-key">⚠ BUCO DATI</span>
+          <canvas id="frequencyAxis" aria-label="Asse delle frequenze"></canvas>
+          <div class="waterfall-container">
+            <canvas
+              id="waterfall"
+              aria-label="Spettrogramma storico, trascina per ingrandire"
+            ></canvas>
+            <div id="hoverChip" class="hover-chip" hidden>
+              <span id="hoverTime"></span><b id="hoverHz"></b
+              ><b id="hoverDb"></b>
+            </div>
+            <button id="lockedCursor" class="locked-cursor" hidden></button>
+          </div>
+          <div class="profile-container">
+            <canvas
+              id="profileCanvas"
+              aria-label="Profilo spettrale medio e al cursore"
+            ></canvas
+            ><span>PROFILO · GRIGIO = MEDIA DELLA VISTA</span>
+          </div>
+          <span class="row-label db-label">DBFS</span
+          ><canvas
+            id="levelsCanvas"
+            aria-label="Livelli per banda nel tempo"
+          ></canvas>
+          <div id="levelLegend" class="level-legend"></div>
+        </div>
+        <div class="chart-help">
+          <span>TRASCINA = INGRANDISCI</span><span>ROTELLA = ZOOM</span
+          ><span>← → = SCORRI</span><span>CLIC = FISSA CURSORE</span
+          ><span>DOPPIO CLIC / ESC = TUTTA LA NOTTE</span
+          ><span>[ ] = NOTTE PREC./SUCC.</span>
+        </div>
+        <div class="data-detail">
+          STORICO 20–200 HZ · 64 INTERVALLI · MEDIE DI CIRCA 30 S · DBFS
+        </div>
+      </section>
+      <section class="bottom-row rise">
+        <div class="diary screen">
+          <h2>ULTIME 15 NOTTI · C’È UNO SCHEMA?</h2>
+          <div class="insights">
+            <div>
+              <label>NOTTI CON RUMORE</label><b id="insightNights">—</b
+              ><span id="insightNightsDetail">in attesa dei dati</span>
+            </div>
+            <div>
+              <label>DI SOLITO</label><b id="insightStart">—</b
+              ><span id="insightEnd">in attesa dei dati</span>
+            </div>
+            <div>
+              <label>MEDIA A NOTTE</label><b id="insightAverage">—</b
+              ><span>durata degli eventi audio</span>
+            </div>
+          </div>
+          <div class="heatmap">
+            <div class="heatmap-heading">
+              <span></span>
+              <div>
+                <span>21</span><span>00</span><span>03</span><span>06</span>
+              </div>
+              <span>RUMORE</span>
+            </div>
+            <div class="heatmap-body">
+              <div id="nightRows"></div>
+              <i id="nightIndicator" hidden></i>
+            </div>
+          </div>
+        </div>
+        <aside class="quality">
+          <h2>I DATI SONO AFFIDABILI?</h2>
+          <div class="quality-row">
+            <i></i><span>Collegamento</span><b id="reliabilityConnection">—</b>
+          </div>
+          <div class="quality-row">
+            <i class="orange-led"></i><span>Registrazione</span
+            ><b id="reliabilityRecording">—</b>
+          </div>
+          <div class="quality-row">
+            <i></i><span>Buchi stanotte</span><b id="reliabilityGaps">—</b>
+          </div>
+          <div class="quality-row">
+            <i></i><span>Batteria telefono</span
+            ><b id="reliabilityBattery">—</b>
+          </div>
+          <div class="quality-row">
+            <i></i><span>Spazio libero</span><b id="reliabilitySpace">—</b>
+          </div>
+          <p id="qualityError" class="quality-error" role="status"></p>
+        </aside>
+      </section>
+      <footer class="secondary-actions">
+        <button id="markerButton">▲ LO SENTO ADESSO</button
+        ><button id="sessionExports">EXPORT DELLE SESSIONI</button
+        ><button id="advancedButton">IMPOSTAZIONI AVANZATE</button
+        ><span>DATI LOCALI · AVVISI IN QUESTA PAGINA</span>
+      </footer>
+      <div id="sessionDownloads" class="session-downloads" hidden></div>
+    </main>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <aside
+      id="drawer"
+      class="drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawerTitle"
+      aria-hidden="true"
+    >
+      <div class="drawer-heading">
+        <h2 id="drawerTitle">AVVISI</h2>
+        <button id="drawerClose" class="raised" aria-label="Chiudi pannello">
+          ✕
+        </button>
+      </div>
+      <div class="drawer-scroll">
+        <div id="alertsContent">
+          <p class="drawer-intro">
+            Avvisi visibili qui, mentre questa pagina è aperta.
+          </p>
+          <div id="alertToggles"></div>
+          <div class="mute">
+            <label>SILENZIA TUTTO</label>
+            <div class="mute-options">
+              <button data-mute="0">ATTIVI</button
+              ><button data-mute="30">30 MIN</button
+              ><button data-mute="60">1 ORA</button
+              ><button data-mute="480">8 ORE</button>
+            </div>
+            <p id="muteStatus"></p>
+          </div>
+          <div id="alertHistory" class="alert-history" aria-live="polite"></div>
+        </div>
+        <div id="bandsContent" hidden>
+          <p class="drawer-intro">
+            Le modifiche restano in bozza. Salvare applica le bande al telefono
+            e apre una nuova sessione se i parametri cambiano.
+          </p>
+          <div id="bandCards"></div>
+        </div>
+        <div id="advancedContent" hidden>
+          <p class="drawer-intro">
+            Controlli della registrazione e dei sensori sul telefono.
+          </p>
+          <div id="advancedForm"></div>
+          <button id="saveAdvanced" class="raised orange">
+            SALVA SUL TELEFONO
+          </button>
+        </div>
+        <p id="settingsStatus" class="settings-status" role="status"></p>
+      </div>
+      <div id="bandFooter" class="drawer-footer" hidden>
+        <button id="cancelBands" class="raised">ANNULLA</button
+        ><button id="saveBands" class="raised orange">
+          SALVA SUL TELEFONO
+        </button>
+      </div>
+    </aside>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script>
+      (function () {
+        const k = encodeURIComponent(
+          new URLSearchParams(location.search).get("k") || "",
+        );
+        const style = document.createElement("style");
+        style.textContent = ["Geist", "Geist Mono", "Doto"]
+          .map(
+            (name, i) =>
+              '@font-face{font-family:"' +
+              name +
+              '";src:url("/fonts/' +
+              ["geist", "geist_mono", "doto"][i] +
+              ".ttf?k=" +
+              k +
+              '");font-weight:100 900;font-display:swap}',
+          )
+          .join("");
+        document.head.append(style);
+        const css = document.createElement("link");
+        css.rel = "stylesheet";
+        css.href = "/dashboard.css?k=" + k;
+        document.head.append(css);
+        ["dashboard-model.js", "dashboard-render.js", "dashboard.js"]
+          .reduce(
+            (p, file) =>
+              p.then(
+                () =>
+                  new Promise((resolve, reject) => {
+                    const s = document.createElement("script");
+                    s.src = "/" + file + "?k=" + k;
+                    s.onload = resolve;
+                    s.onerror = reject;
+                    document.body.append(s);
+                  }),
+              ),
+            Promise.resolve(),
+          )
+          .catch(() => {
+            document.getElementById("loadState").textContent =
+              "Dashboard non caricata. Riapri l’indirizzo mostrato dal telefono.";
+          });
+      })();
+    </script>
+  </body>
+</html>

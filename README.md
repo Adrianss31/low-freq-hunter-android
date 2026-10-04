@@ -51,8 +51,8 @@ di sistema sulle basse frequenze), registrazione a schermo spento nel
 foreground service, canale **V** dall'accelerometro, programmazione con
 setAlarmClock, **sessioni unite per finestra** giorno/notte (stop e riprese
 restano una sessione con il buco documentato come gap), clip WAV sugli eventi,
-**Monitor dal PC** (dashboard web in LAN con centro notifiche, ricorrenza e
-modifica delle impostazioni), widget home. Smussatura "a due velocità": spettro
+**Monitor dal PC** (dashboard web in LAN, spettro live, notte 21–09, diario
+delle ultime 15 notti, avvisi nella pagina ed esportazioni), widget home. Smussatura "a due velocità": spettro
 e meter interpolati a 60 fps, cifre mediate ~1 s; motore eventi e dati
 registrati usano sempre i valori grezzi.
 
@@ -68,11 +68,44 @@ Il wrapper include il checksum della distribuzione Gradle 8.10.2.
 GitHub Actions (`.github/workflows/build.yml`) esegue i test e la firma con keystore dai secrets `KEYSTORE_BASE64` /
 `KEYSTORE_PASSWORD` (alias `lowfreqhunter`; i file locali stanno in `.keys/`,
 mai committati). Ogni push su `main` produce l'APK come artifact; i tag `v*`
-pubblicano una release con `lowfreqhunter.apk` allegato.
+preparano una release in bozza con `lowfreqhunter.apk` allegato; si pubblica dopo
+la verifica di firma, compatibilità e checksum. Il canale stabile è GitHub Latest.
 
 I test JVM (`gradle testReleaseUnitTest`) verificano FFT, integrazione di
 banda, macchina a stati eventi, gap, slice waterfall, canale V, smussatori
 (EMA/mediana) e aggregazione di ricorrenza con segnali sintetici.
+
+## Dashboard PC
+
+In **Setup → Sistema → Monitor dal PC**, attivare l'accesso e copiare l'URL
+mostrato dall'app. PC e telefono devono condividere la rete locale. La dashboard
+resta accessibile dopo lo stop di REC; disattivare Monitor dal PC chiude il server
+e libera le risorse dedicate. Un servizio separato mantiene la connessione,
+con la propria notifica, senza aprire il microfono.
+
+Lo spettro live copre 0–250 Hz; lo storico conserva solo le misure effettivamente
+salvate: **20–200 Hz, 64 intervalli, medie di circa 30 secondi, −110…−20 dBFS**.
+Fuori da questa copertura, nei buchi e nel futuro non vengono inventati valori.
+Il diario include le notti mancanti. Orari e cambi d'ora seguono il fuso del
+telefono. Le comparazioni escludono notti mancanti e configurazioni/dispositivi,
+sorgenti o contesti diversi. Audio in dBFS e vibrazioni in dB relativi a 1 g
+usano scale distinte; non sono misure fonometriche certificate.
+
+Trascinare o usare la rotella per ingrandire, le frecce per scorrere, cliccare
+per fissare il cursore e premere Esc per ripristinare la notte. Il report PNG
+comprende l'intera notte; PNG VISTA salva l'inquadratura; CSV mantiene le
+sessioni, i parametri originali degli eventi e i gap. Restano disponibili gli
+export JSON/campioni/report delle singole sessioni e il marker dal PC.
+Le bande si modificano in bozza: Annulla non scrive sul telefono; Salvare
+applica i parametri e apre una nuova sessione se necessario.
+
+Gli avvisi compaiono **nella pagina aperta**: inizio/fine evento, rumore oltre
+30 minuti, interruzione del collegamento oltre 60 secondi e ritorno,
+registrazione ferma/ripartita e batteria sotto 20%. Sono silenziabili per
+30 minuti, 1 o 8 ore; la prima lettura e il ritorno online non replicano gli
+eventi già in corso. Il server HTTP richiede il token; font e dati restano locali.
+
+Verifiche browser: `node --test tests/*.test.cjs`.
 
 ## Installazione
 

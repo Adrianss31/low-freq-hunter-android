@@ -36,7 +36,7 @@ import kotlin.math.roundToInt
  * Server HTTP sulla LAN: dashboard e API JSON per monitorare dal PC la
  * sessione in corso (e sfogliare l'archivio) mentre il telefono registra.
  *
- * Vive dentro MonitorService: parte e muore col monitoraggio. Solo HTTP in
+ * Il servizio LAN dedicato lo mantiene disponibile anche con REC fermo. Solo HTTP in
  * chiaro — rete di casa — con un token nell'URL come lucchetto minimo.
  *
  * API (tutte con ?k=<token>):
@@ -89,11 +89,15 @@ class LanServer(
                 uri in setOf("/dashboard.css", "/dashboard-model.js", "/dashboard-render.js", "/dashboard.js", "/fonts/geist.ttf", "/fonts/geist_mono.ttf", "/fonts/doto.ttf") -> asset(uri)
                 uri == "/api/nights" -> {
                     val date = nightDate(session.parms["anchor"])
-                    val count = session.parms["count"]?.toIntOrNull() ?: 16
+                    val count = session.parms["count"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("count non valido") } ?: 16
                     require(count in 1..16) { "Numero di notti non valido" }
                     json(kotlinx.serialization.json.JsonArray(nights.summaries(date, count)).toString())
                 }
                 uri == "/api/night" -> json(nights.load(nightDate(session.parms["date"])).toString())
+                uri == "/api/night/eventi.csv" -> {
+                    val date=nightDate(session.parms["date"])
+                    download(nights.eventsCsv(date), "text/csv", "LFH_${date}_eventi.csv")
+                }
                 uri == "/api/night/levels" -> {
                     val date = nightDate(session.parms["date"])
                     val w = NightWindow.forDate(date)
@@ -351,6 +355,7 @@ class LanServer(
         // /api/session/<id>[.json | /eventi.csv | /campioni.csv]
         val rest = uri.removePrefix("/api/session/")
         val (id, kind) = when {
+            rest.endsWith("/report.png") -> Pair(rest.removeSuffix("/report.png"), "png")
             rest.endsWith(".json") -> Pair(rest.removeSuffix(".json"), "json")
             rest.endsWith("/eventi.csv") -> Pair(rest.removeSuffix("/eventi.csv"), "ecsv")
             rest.endsWith("/campioni.csv") -> Pair(rest.removeSuffix("/campioni.csv"), "scsv")
@@ -371,6 +376,13 @@ class LanServer(
         }
         val b = runBlocking { SessionBundle.load(dao, id) } ?: return text(Response.Status.NOT_FOUND, "sessione sconosciuta")
         return when (kind) {
+            "png" -> {
+                val bytes=Exporter.reportPng(b)
+                newFixedLengthResponse(Response.Status.OK,"image/png",bytes.inputStream(),bytes.size.toLong()).apply {
+                    addHeader("Content-Disposition", "attachment; filename=\"${Exporter.baseName(b)}_report.png\"")
+                    addHeader("Cache-Control", "no-store")
+                }
+            }
             "json" -> download(Exporter.json(b), "application/json", "${Exporter.baseName(b)}.json")
             "ecsv" -> download(Exporter.eventsCsv(b), "text/csv", "${Exporter.baseName(b)}_eventi.csv")
             else -> download(Exporter.samplesCsv(b), "text/csv", "${Exporter.baseName(b)}_campioni.csv")

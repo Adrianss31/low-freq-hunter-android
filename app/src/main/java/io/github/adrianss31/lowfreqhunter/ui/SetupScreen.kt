@@ -103,6 +103,7 @@ fun SetupScreen() {
     val loaded by repo.flow.collectAsState(initial = null)
     val s = loaded ?: return
     val bus by MonitorBus.state.collectAsState()
+    val lanError by MonitorBus.lanError.collectAsState()
     val upd by AppUpdater.state.collectAsState()
 
     fun set(t: (AppSettings) -> AppSettings) {
@@ -336,8 +337,8 @@ fun SetupScreen() {
             if (s.lan.enabled) {
                 val url = bus.lanUrl
                 SettingRow(
-                    url?.removePrefix("http://")?.substringBefore("/") ?: "Wi-Fi non connesso",
-                    if (url == null) "Collega il telefono alla rete di casa"
+                    url?.removePrefix("http://")?.substringBefore("/") ?: if(lanError!=null) "Dashboard non disponibile" else "Collegamento in attesa",
+                    if (url == null) lanError ?: "Collega il telefono alla rete di casa"
                     else "Server attivo anche con REC fermo · accesso con token",
                 ) {
                     if (url != null) RowCta("COPIA") {

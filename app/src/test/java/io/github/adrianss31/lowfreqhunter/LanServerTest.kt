@@ -10,6 +10,11 @@ import io.github.adrianss31.lowfreqhunter.engine.EngineCfg
 import io.github.adrianss31.lowfreqhunter.server.LanServer
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import kotlinx.serialization.json.*
+import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.runBlocking
+import io.github.adrianss31.lowfreqhunter.data.*
+import java.time.LocalDate
+import io.github.adrianss31.lowfreqhunter.server.NightWindow
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,5 +51,37 @@ class LanServerTest {
             assertTrue(data["now"]!!.jsonPrimitive.long>123000L)
             assertNotNull(data["timezone"])
         } finally { MonitorBus.spectrum.value=null;db.close() }
+    }
+    @Test fun nightCsvClipsEventsKeepsSessionsAndExportsEmptyNight() = runBlocking {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        try {
+            val w=NightWindow.forDate(LocalDate.parse("2026-10-03"))
+            for(id in listOf("first","second")) {
+                db.dao().upsertSession(SessionEntity(id,"",(w.from-100)*1000,(w.to+100)*1000,w.to,Json.encodeToString(EngineCfg()),48000,1.46,"MIC"))
+                db.dao().insertEvent(EventEntity(id=id+"-event",sessionId=id,band="A",startT=w.from-10,endT=w.from+20,durationS=30,peakDb=-50.0,avgDb=-55.0))
+            }
+            db.dao().insertEvent(EventEntity(id="gap",sessionId="first",band="gap",startT=w.from+40,endT=w.from+45,durationS=5,peakDb=null,avgDb=null))
+            val server=LanServer(ctx,db.dao(),"test-key",0,{EngineCfg()})
+            val r=server.serve(request("/api/night/eventi.csv",mapOf("k" to "test-key","date" to w.date.toString())))
+            assertEquals(200,r.status.requestStatus);assertTrue(r.mimeType.startsWith("text/csv"))
+            val csv=r.data.bufferedReader().readText()
+            assertTrue(csv.contains("first"));assertTrue(csv.contains("second"));assertTrue(csv.contains("gap"))
+            assertTrue(csv.contains(w.from.toString()));assertFalse(csv.contains((w.from-10).toString()))
+            val empty=server.serve(request("/api/night/eventi.csv",mapOf("k" to "test-key","date" to "2026-09-01")))
+            assertEquals(1,empty.data.bufferedReader().readLines().size)
+        } finally {db.close()}
+        Unit
+    }
+    @Test fun sessionReportIsRealPngAndRequiresToken() = runBlocking {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        try {
+            db.dao().upsertSession(SessionEntity("report","Test",100000,130000,129,Json.encodeToString(EngineCfg()),48000,1.46,"MIC"))
+            val server=LanServer(ctx,db.dao(),"test-key",0,{EngineCfg()})
+            assertEquals(401,server.serve(request("/api/session/report/report.png",emptyMap())).status.requestStatus)
+            val r=server.serve(request("/api/session/report/report.png"))
+            assertEquals(200,r.status.requestStatus);assertEquals("image/png",r.mimeType)
+            assertArrayEquals(byteArrayOf(-119,80,78,71,13,10,26,10),r.data.readBytes().take(8).toByteArray())
+        } finally {db.close()}
+        Unit
     }
 }

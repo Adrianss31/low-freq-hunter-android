@@ -10,6 +10,7 @@ permissions:
   contents: write
 
 env:
+  RELEASE_VERSION: v1.1.0
   KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
   KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
 
@@ -28,8 +29,17 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Unit test
-        run: ./gradlew testReleaseUnitTest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Dashboard checks
+        run: |
+          node --test tests/*.test.cjs
+          for file in app/src/main/assets/dashboard*.js; do node --check "$file"; done
+
+      - name: Android tests and lint
+        run: ./gradlew testReleaseUnitTest lintRelease
 
       - name: Richiedi firma per le release
         if: github.ref_type == 'tag'
@@ -42,7 +52,7 @@ jobs:
       - name: Build APK
         env:
           VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || env.RELEASE_VERSION }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             export KEYSTORE_FILE="$RUNNER_TEMP/keystore.p12"
@@ -63,4 +73,5 @@ jobs:
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: lowfreqhunter.apk

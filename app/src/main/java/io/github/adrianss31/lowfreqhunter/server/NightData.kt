@@ -181,6 +181,37 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             }) }
         }
     }
+    /** Events are clipped to the selected night; gap rows retain their unavailable-data meaning. */
+    @Synchronized fun eventsCsv(date: LocalDate): String {
+        val w=NightWindow.forDate(date)
+        val ss=sessions(w)
+        val rows=mutableListOf<List<String>>()
+        fun row(s: SessionEntity?,id: String,band: String,kind: String,a: Long,b: Long,peak: Double?,active: Boolean=false) {
+            val start=max(w.from,a);val end=min(w.to,b)
+            if(end<=start)return
+            val cfg=s?.let(::config);val channel=cfg?.band(band)
+            rows.add(listOf(date.toString(),ZoneId.systemDefault().id,s?.id.orEmpty(),id,band,kind,start.toString(),end.toString(),(end-start).toString(),
+                channel?.center?.toString().orEmpty(),channel?.width?.toString().orEmpty(),
+                (if(band==Channels.VIB)cfg?.vib?.thr else channel?.thr)?.toString().orEmpty(),
+                if(band==Channels.GAP)"" else if(band==Channels.VIB)"dB rel 1 g" else "dBFS",peak?.takeIf { it.isFinite() }?.toString().orEmpty(),active.toString()))
+        }
+        for(s in ss) {
+            for(e in events(s,w)) row(s,e.id,e.band,if(e.band==Channels.GAP)"gap" else e.kind,e.startT,e.endT,e.peakDb)
+            val st=MonitorBus.state.value
+            if(st.running&&st.mode=="rec"&&st.sessionId==s.id) for((band,start) in st.activeBands)
+                row(s,"active_${s.id}_$band",band,"steady",start,min(w.to,System.currentTimeMillis()/1000),st.levels[band],true)
+        }
+        for(i in 1 until ss.size) {
+            val end=ss[i-1].endedAt?.div(1000)?:continue
+            val start=ss[i].startedAt/1000
+            if(start>end+1) row(null,"between_${ss[i-1].id}_${ss[i].id}",Channels.GAP,"gap",end,start,null)
+        }
+        fun csv(v: String)="\""+v.replace("\"","\"\"")+"\""
+        return buildString {
+            append("date,timezone,sessionId,eventId,band,kind,startEpochS,endEpochS,durationS,centerHz,widthHz,threshold,unit,peak,active\n")
+            rows.sortedBy { it[6].toLong() }.forEach { append(it.joinToString(",",transform=::csv));append('\n') }
+        }
+    }
     @Synchronized fun levels(date: LocalDate,from: Long,to: Long,cols: Int): LevelPayload {
         val w=NightWindow.forDate(date)
         require(from>=w.from && to<=w.to && to>from && cols in 1..2000) { "Intervallo o risoluzione non validi" }
