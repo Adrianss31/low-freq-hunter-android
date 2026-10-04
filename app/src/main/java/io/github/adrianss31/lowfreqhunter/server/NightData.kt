@@ -134,6 +134,10 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
         }
         return buildJsonObject {
             put("date",w.date.toString()); put("from",w.from); put("to",w.to); put("recorded",count>0)
+            put("comparisonKey", ss.map { session ->
+                val device = runCatching { codec.parseToJsonElement(session.deviceJson).jsonObject.filterKeys { it != "app_version" } }.getOrDefault(emptyMap())
+                listOf(session.cfgJson, session.audioSource, session.contextJson, JsonObject(device).toString()).joinToString("|")
+            }.distinct().sorted().joinToString("||"))
             put("coverageSeconds",count); put("noiseSeconds",NightMath.unionDuration(measuredIntervals,w.from,w.to))
             put("eventsCount",audio.size); put("gapSeconds",gap.sumOf { it.second-it.first }); put("gapCount",gap.size)
             intervals.minOfOrNull { it.first }?.let { put("noiseStart",it) }
