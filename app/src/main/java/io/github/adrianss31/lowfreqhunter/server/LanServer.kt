@@ -86,6 +86,7 @@ class LanServer(
         return try {
             when {
                 uri == "/" || uri == "/index.html" -> dashboard()
+                uri in setOf("/dashboard.css", "/dashboard-model.js", "/dashboard-render.js", "/dashboard.js", "/fonts/geist.ttf", "/fonts/geist_mono.ttf", "/fonts/doto.ttf") -> asset(uri)
                 uri == "/api/nights" -> {
                     val date = nightDate(session.parms["anchor"])
                     val count = session.parms["count"]?.toIntOrNull() ?: 16
@@ -458,9 +459,22 @@ class LanServer(
 
     private fun round1(v: Double): Double = (v * 10).roundToInt() / 10.0
 
+    private fun asset(uri: String): Response {
+        val mime = when {
+            uri.endsWith(".css") -> "text/css; charset=utf-8"
+            uri.endsWith(".js") -> "text/javascript; charset=utf-8"
+            else -> "font/ttf"
+        }
+        val bytes = ctx.assets.open(uri.removePrefix("/")).readBytes()
+        return newFixedLengthResponse(Response.Status.OK, mime, bytes.inputStream(), bytes.size.toLong()).apply {
+            addHeader("Cache-Control", "private, max-age=3600")
+            addHeader("Referrer-Policy", "no-referrer")
+        }
+    }
+
     private fun dashboard(): Response {
         val html = ctx.assets.open("dashboard.html").readBytes().toString(Charsets.UTF_8)
-        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html)
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html).apply { addHeader("Cache-Control", "no-store"); addHeader("Referrer-Policy", "no-referrer") }
     }
 
     private fun json(body: String): Response =
