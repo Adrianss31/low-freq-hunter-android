@@ -657,9 +657,10 @@
       g.fillStyle = INK;
       g.fillRect(0, 0, w, h);
       const channels = this.s.night.channels || [],
-        laneH = Math.min(7, (h - 15) / Math.max(1, channels.length) - 1);
+        geometry = M.eventLaneGeometry(channels.length, h),
+        laneH = geometry.height;
       channels.forEach((c, i) => {
-        const y = 15 + i * (laneH + 1);
+        const y = geometry.top + i * (laneH + geometry.gap);
         g.fillStyle = "#1f1e1b";
         g.fillRect(0, y, w, laneH);
         for (const e of this.s.night.events.filter((e) => e.band === c.key)) {

@@ -39,4 +39,13 @@ class LanDashboardServiceTest {
             assertNull(MonitorBus.state.value.lanUrl)
         } finally { controller.destroy();MonitorBus.state.value=MonitorBus.State();MonitorBus.spectrum.value=null }
     }
+    @Test fun lateSettingsCannotReopenDestroyedService() {
+        val port=ServerSocket(0).use { it.localPort }
+        val controller=Robolectric.buildService(LanDashboardService::class.java).create();val service=controller.get()
+        val cfg=AppSettings(lan=LanCfg(true,port,"destroy-test"))
+        service.configure(cfg);controller.destroy()
+        service.configure(cfg)
+        assertTrue(runCatching { URL("http://127.0.0.1:$port/api/state?k=destroy-test").openConnection().apply { connectTimeout=300;readTimeout=300 }.getInputStream().close() }.isFailure)
+        MonitorBus.state.value=MonitorBus.State()
+    }
 }

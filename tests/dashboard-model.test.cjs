@@ -199,3 +199,51 @@ test("level axes retain short extrema and keep vibration on its own scale", () =
   assert.ok(s.vibration.min <= -70 && s.vibration.max >= -10);
   assert.notDeepEqual(s.audio, s.vibration);
 });
+
+test("saving edited fields preserves unrelated concurrent phone changes", () => {
+  const original = [
+    { id: "A", center: 50, thr: -60, enabled: true },
+    { id: "B", center: 62, thr: -55, enabled: true },
+  ];
+  const draft = structuredClone(original);
+  draft[0].center = 51;
+  const latest = structuredClone(original);
+  latest[0].thr = -65;
+  latest[1].center = 63;
+  const merged = M.mergeBands(original, draft, latest);
+  assert.equal(merged[0].center, 51);
+  assert.equal(merged[0].thr, -65);
+  assert.equal(merged[1].center, 63);
+});
+test("band additions/removals are explicit and concurrent ID collision is rejected", () => {
+  assert.deepEqual(
+    M.mergeBands(
+      [{ id: "A" }],
+      [{ id: "B", center: 62 }],
+      [{ id: "A" }, { id: "C" }],
+    ),
+    [{ id: "C" }, { id: "B", center: 62 }],
+  );
+  assert.throws(
+    () => M.mergeBands([], [{ id: "A" }], [{ id: "A", center: 100 }]),
+    /conflitto/i,
+  );
+});
+test("event hit testing uses the clicked lane and ignores empty lane space", () => {
+  const n = {
+    channels: [{ key: "a" }, { key: "b" }],
+    events: [
+      { band: "a", startT: 100, endT: 200 },
+      { band: "b", startT: 150, endT: 160 },
+    ],
+  };
+  const hit = M.eventAt(n, 155, 24, 40);
+  assert.equal(hit.band, "b");
+  assert.equal(M.eventAt(n, 170, 24, 40), null);
+});
+test("outage duration uses the PC clock even when the phone clock differs", () => {
+  const a = new M.Alerts();
+  a.observe({ running: true, activeBands: {} }, 100000 + 7200000, 100000);
+  assert.deepEqual(a.disconnect(110000), []);
+  assert.ok(a.disconnect(160001).some((e) => e.type === "offline"));
+});

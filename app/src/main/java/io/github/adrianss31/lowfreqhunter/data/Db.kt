@@ -191,6 +191,9 @@ interface LfhDao {
     @Query("SELECT * FROM slices WHERE sessionId = :id AND t > :fromT AND t - 30 < :toT ORDER BY t")
     suspend fun slicesInRange(id: String, fromT: Long, toT: Long): List<SliceEntity>
 
+    @Query("SELECT MAX(t) FROM slices WHERE sessionId = :id AND t <= :beforeT")
+    suspend fun sliceEndBefore(id: String, beforeT: Long): Long?
+
     @Query("SELECT * FROM markers WHERE sessionId = :id AND t >= :fromT AND t < :toT ORDER BY t")
     suspend fun markersInRange(id: String, fromT: Long, toT: Long): List<MarkerEntity>
 

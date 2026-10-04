@@ -89,6 +89,10 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
         }
         return NightMath.union(explicit,w.from,min(w.to,System.currentTimeMillis()/1000))
     }
+    private fun measuredEnd(s: SessionEntity,w: NightWindow,st: MonitorBus.State): Long {
+        val last=st.lastDataAt.takeIf { it>0 }?.div(1000) ?: (s.lastT+1)
+        return min(min(System.currentTimeMillis()/1000,w.to),last)
+    }
     private fun allEvents(ss: List<SessionEntity>,w: NightWindow): JsonArray = buildJsonArray {
         for(s in ss) {
             for(e in events(s,w).filter { it.band!=Channels.GAP }) add(buildJsonObject {
@@ -97,8 +101,8 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
                 e.peakDb?.takeIf { it.isFinite() }?.let { put("peakDb",it) }
             })
             val st=MonitorBus.state.value
-            if(st.running && st.sessionId==s.id) for((id,start) in st.activeBands) {
-                val end=min(System.currentTimeMillis()/1000,w.to)
+            if(st.running && st.mode=="rec" && st.sessionId==s.id) for((id,start) in st.activeBands) {
+                val end=measuredEnd(s,w,st)
                 if(start<end && end>w.from) add(buildJsonObject {
                     put("id","active_${s.id}_$id"); put("sessionId",s.id); put("band",key(s,id)); put("bandId",id)
                     put("startT",max(w.from,start)); put("endT",end); put("active",true); put("kind","steady")
@@ -173,9 +177,21 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
                 put("live",st.running && st.mode=="rec" && st.sessionId==s.id)
             }) }
             putJsonArray("gaps") { gaps(ss,w).forEach { (a,b)->add(buildJsonObject { put("startT",a);put("endT",b) }) } }
-            putJsonArray("slices") { for(s in ss) for(sl in runBlocking { dao.slicesInRange(s.id,w.from,w.to) }) add(buildJsonObject {
-                put("sessionId",s.id);put("t",sl.t);put("startT",max(max(w.from,s.startedAt/1000),sl.t-30));put("endT",min(w.to,sl.t));put("b64",Base64.getEncoder().encodeToString(sl.bins))
-            }) }
+            putJsonArray("slices") {
+                for(s in ss) {
+                    var previous=runBlocking { dao.sliceEndBefore(s.id,w.from) } ?: (s.startedAt/1000)
+                    val sessionGaps=events(s,w).filter { it.band==Channels.GAP }
+                    for(sl in runBlocking { dao.slicesInRange(s.id,w.from,w.to) }) {
+                        val gapEnd=sessionGaps.filter { it.endT<=sl.t }.maxOfOrNull { it.endT } ?: 0L
+                        val start=max(max(max(w.from,s.startedAt/1000),sl.t-30),max(previous,gapEnd))
+                        val end=min(w.to,sl.t)
+                        if(end>start) add(buildJsonObject {
+                            put("sessionId",s.id);put("t",sl.t);put("startT",start);put("endT",end);put("b64",Base64.getEncoder().encodeToString(sl.bins))
+                        })
+                        previous=sl.t
+                    }
+                }
+            }
             putJsonArray("markers") { for(s in ss) for(m in runBlocking { dao.markersInRange(s.id,w.from,w.to) }) add(buildJsonObject {
                 put("sessionId",s.id);put("t",m.t);put("text",m.origin.removePrefix("nota: "))
             }) }
@@ -199,7 +215,7 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             for(e in events(s,w)) row(s,e.id,e.band,if(e.band==Channels.GAP)"gap" else e.kind,e.startT,e.endT,e.peakDb)
             val st=MonitorBus.state.value
             if(st.running&&st.mode=="rec"&&st.sessionId==s.id) for((band,start) in st.activeBands)
-                row(s,"active_${s.id}_$band",band,"steady",start,min(w.to,System.currentTimeMillis()/1000),st.levels[band],true)
+                row(s,"active_${s.id}_$band",band,"steady",start,measuredEnd(s,w,st),st.levels[band],true)
         }
         for(i in 1 until ss.size) {
             val end=ss[i-1].endedAt?.div(1000)?:continue

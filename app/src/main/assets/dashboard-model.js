@@ -246,7 +246,11 @@
       this.startedDown = 0;
       this.long = new Set();
     }
-    observe(s, now) {
+    observe(s, now, connectionNow = now) {
+      const measuredNow =
+        finite(s.lastDataAt) && s.lastDataAt > 0
+          ? Math.min(now, s.lastDataAt)
+          : now;
       const result = [];
       const resumed = this.disconnected;
       this.disconnected = false;
@@ -293,7 +297,7 @@
           });
         for (const [k, t] of Object.entries(after)) {
           const key = `${k}:${t}`;
-          if (now / 1000 - t >= 1800 && !this.long.has(key)) {
+          if (measuredNow / 1000 - t >= 1800 && !this.long.has(key)) {
             this.long.add(key);
             result.push({
               type: "long",
@@ -304,10 +308,10 @@
         }
       } else {
         for (const [k, t] of Object.entries(s.activeBands || {}))
-          if (now / 1000 - t >= 1800) this.long.add(`${k}:${t}`);
+          if (measuredNow / 1000 - t >= 1800) this.long.add(`${k}:${t}`);
       }
       this.prev = s;
-      this.lastSeen = now;
+      this.lastSeen = connectionNow;
       return result;
     }
     disconnect(now) {
@@ -324,6 +328,55 @@
       }
       return [];
     }
+  }
+  function mergeBands(original, draft, latest) {
+    const before = new Map(original.map((b) => [b.id, b])),
+      after = new Map(draft.map((b) => [b.id, b]));
+    const deleted = new Set(
+      original.filter((b) => !after.has(b.id)).map((b) => b.id),
+    );
+    const out = latest.filter((b) => !deleted.has(b.id)).map((b) => ({ ...b }));
+    for (const b of draft) {
+      const old = before.get(b.id),
+        at = out.findIndex((x) => x.id === b.id);
+      if (!old) {
+        if (at >= 0)
+          throw new Error(
+            "Conflitto sulla banda " + b.id + ": riapri il pannello",
+          );
+        out.push({ ...b });
+        continue;
+      }
+      const changes = Object.keys(b).filter(
+        (k) => k !== "id" && JSON.stringify(b[k]) !== JSON.stringify(old[k]),
+      );
+      if (!changes.length) continue;
+      if (at < 0)
+        throw new Error("Conflitto: banda " + b.id + " rimossa sul telefono");
+      for (const k of changes) out[at][k] = b[k];
+    }
+    return out;
+  }
+  function eventLaneGeometry(count, height) {
+    const slot = (height - 15) / Math.max(1, count),
+      gap = Math.min(1, slot * 0.2);
+    return { top: 15, height: Math.min(7, slot - gap), gap };
+  }
+  function eventAt(night, t, y, height) {
+    const geo = eventLaneGeometry(night.channels.length, height);
+    const lane = Math.floor((y - geo.top) / (geo.height + geo.gap));
+    if (
+      lane < 0 ||
+      lane >= night.channels.length ||
+      y > geo.top + lane * (geo.height + geo.gap) + geo.height
+    )
+      return null;
+    const key = night.channels[lane].key;
+    return (
+      night.events.find(
+        (e) => e.band === key && t >= e.startT && t <= e.endT,
+      ) || null
+    );
   }
   function levelScales(points, channels) {
     const audio = { min: -85, max: -45 },
@@ -347,6 +400,9 @@
     return { audio, vibration };
   }
   return {
+    mergeBands,
+    eventLaneGeometry,
+    eventAt,
     levelScales,
     finite,
     clamp,

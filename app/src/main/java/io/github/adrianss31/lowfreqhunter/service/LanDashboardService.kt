@@ -29,6 +29,7 @@ class LanDashboardService : Service() {
     private var bound: LanCfg?=null
     @Volatile private var current=AppSettings()
     private var observing=false
+    private var destroyed=false
     private var wifi: android.net.wifi.WifiManager.WifiLock?=null
     private var wake: PowerManager.WakeLock?=null
 
@@ -65,6 +66,7 @@ class LanDashboardService : Service() {
         return START_STICKY
     }
     @Synchronized internal fun configure(settings: AppSettings) {
+        if(destroyed)return
         current=settings
         if(!settings.lan.enabled || settings.lan.token.isBlank()) {
             closeServer();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return
@@ -106,8 +108,10 @@ class LanDashboardService : Service() {
         wake?.let { if(it.isHeld) it.release() };wake=null
         MonitorBus.state.update { it.copy(lanUrl=null) }
     }
-    override fun onDestroy() {
+    @Synchronized override fun onDestroy() {
+        destroyed=true
+        scope.cancel()
         if(networkRegistered) runCatching { (getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(networkCallback) }
-        closeServer();scope.cancel();super.onDestroy()
+        closeServer();super.onDestroy()
     }
 }

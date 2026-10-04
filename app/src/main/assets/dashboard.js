@@ -35,6 +35,7 @@
     levels: [],
     spectrum: null,
     selected: null,
+    pendingNight: null,
     anchor: null,
     hidden: new Set(),
     palette: "caldo",
@@ -97,17 +98,40 @@
     onContrast: renderToolbar,
     onFrame: renderAnimatedStats,
   });
-  async function api(p, options = {}) {
-    const r = await fetch(url(p), { ...options, cache: "no-store" });
-    if (!r.ok) {
-      const text = await r.text();
-      throw new Error(
-        r.status === 401
-          ? "Token mancante o non valido"
-          : text || `Errore ${r.status}`,
-      );
+  async function api(p, options = {}, decode = (r) => r.json()) {
+    const controller = new AbortController(),
+      external = options.signal;
+    let expired = false;
+    const cancel = () => controller.abort();
+    if (external?.aborted) cancel();
+    else external?.addEventListener("abort", cancel, { once: true });
+    const timeout = setTimeout(() => {
+      expired = true;
+      controller.abort();
+    }, 10000);
+    try {
+      const r = await fetch(url(p), {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(
+          r.status === 401
+            ? "Token mancante o non valido"
+            : text || `Errore ${r.status}`,
+        );
+      }
+      return await decode(r);
+    } catch (e) {
+      if (expired)
+        throw new Error("Il telefono non risponde: tempo di attesa scaduto");
+      throw e;
+    } finally {
+      clearTimeout(timeout);
+      external?.removeEventListener("abort", cancel);
     }
-    return r.json();
   }
   function toast(text, error = false) {
     $("toast").textContent = text;
@@ -512,8 +536,14 @@
     }
   }
   async function selectNight(date, refresh = false) {
+    if (
+      refresh &&
+      (A.pendingNight !== null || A.selected !== date || A.night?.date !== date)
+    )
+      return;
     const id = gate.next();
     selectedRevision++;
+    A.pendingNight = id;
     nightAbort?.abort();
     levelsAbort?.abort();
     nightAbort = new AbortController();
@@ -552,6 +582,8 @@
       $("loadState").textContent = e.message;
       toast("Notte non caricata: " + e.message, true);
       renderDiary();
+    } finally {
+      if (A.pendingNight === id) A.pendingNight = null;
     }
   }
   async function loadLevels() {
@@ -594,7 +626,7 @@
       A.offset = s.now - Date.now();
       A.online = true;
       A.lastOnline = Date.now();
-      emit(alerts.observe(s, now()));
+      emit(alerts.observe(s, now(), Date.now()));
       if (!A.anchor || s.nightDate !== A.anchor) {
         A.anchor = s.nightDate;
         await refreshNights();
@@ -615,6 +647,8 @@
       if (
         A.night &&
         A.night.date === A.anchor &&
+        A.selected === A.night.date &&
+        A.pendingNight === null &&
         (changed ||
           (Date.now() - lastNightRefresh > 5000 &&
             s.running &&
@@ -739,9 +773,7 @@
       } else {
         const p = cursor(e, c);
         if (id === "eventLanes") {
-          const event = A.night.events.find(
-            (ev) => p.t >= ev.startT && p.t <= ev.endT,
-          );
+          const event = M.eventAt(A.night, p.t, p.y, p.h);
           if (event) {
             R.setView(
               { ...R.target, t0: event.startT - 60, t1: event.endT + 60 },
@@ -1100,7 +1132,11 @@
     $("settingsStatus").textContent = "Salvataggio…";
     try {
       const latest = await api("/api/settings");
-      latest.engine.bands = A.draft.engine.bands;
+      latest.engine.bands = M.mergeBands(
+        A.settings.engine.bands,
+        A.draft.engine.bands,
+        latest.engine.bands,
+      );
       const result = await api("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1117,7 +1153,7 @@
       lastListRefresh = 0;
     } catch (e) {
       $("settingsStatus").textContent = e.message;
-      toast("Bande non salvate: " + e.message, true);
+      toast("Salvataggio non confermato: " + e.message, true);
     } finally {
       $("saveBands").disabled = false;
     }
@@ -1254,29 +1290,29 @@
     );
   }
   $("exportPng").onclick = async () => {
+    const date = A.night?.date;
+    if (!date) return;
     try {
-      await saveBlob(
-        await canvasBlob(R.exportView()),
-        `LFH_${A.night.date}_vista.png`,
-      );
+      await saveBlob(await canvasBlob(R.exportView()), `LFH_${date}_vista.png`);
       toast("PNG della vista creato");
     } catch (e) {
       toast(e.message, true);
     }
   };
   $("exportReport").onclick = async () => {
+    const n = A.night;
+    if (!n) return;
     try {
+      const result = await api(
+        `/api/night/levels?date=${n.date}&from=${n.from}&to=${n.to}&cols=2000`,
+      );
+      if (A.selected !== n.date || A.night?.date !== n.date)
+        throw new Error(
+          "Notte cambiata: ripeti il report sulla notte selezionata",
+        );
       await saveBlob(
-        await canvasBlob(
-          R.exportReport(
-            (
-              await api(
-                `/api/night/levels?date=${A.night.date}&from=${A.night.from}&to=${A.night.to}&cols=2000`,
-              )
-            ).points,
-          ),
-        ),
-        `LFH_${A.night.date}_report.png`,
+        await canvasBlob(R.exportReport(result.points)),
+        `LFH_${n.date}_report.png`,
       );
       toast("Report della notte creato");
     } catch (e) {
@@ -1284,10 +1320,13 @@
     }
   };
   $("exportCsv").onclick = async () => {
+    const date = A.night?.date;
+    if (!date) return;
     try {
-      const r = await fetch(url("/api/night/eventi.csv?date=" + A.night.date));
-      if (!r.ok) throw new Error(await r.text());
-      await saveBlob(await r.blob(), `LFH_${A.night.date}_eventi.csv`);
+      const blob = await api("/api/night/eventi.csv?date=" + date, {}, (r) =>
+        r.blob(),
+      );
+      await saveBlob(blob, `LFH_${date}_eventi.csv`);
       toast("CSV della notte scaricato");
     } catch (e) {
       toast(e.message, true);
@@ -1323,6 +1362,14 @@
     clearTimeout(levelTimer);
     levelTimer = setTimeout(loadLevels, 200);
   });
+  setInterval(() => {
+    if (A.lastOnline && Date.now() - A.lastOnline >= 10000) {
+      A.online = false;
+      emit(alerts.disconnect(Date.now()));
+    }
+    renderHeader();
+    R.invalidate();
+  }, 1000);
   renderHeader();
   renderAlerts();
   poll();

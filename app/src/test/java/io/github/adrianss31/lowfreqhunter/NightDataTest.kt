@@ -65,4 +65,30 @@ class NightDataTest {
         } finally { db.close() }
         Unit
     }
+    @Test fun partialStopAndGapSlicesDoNotOverwritePreviousCoverage() = runBlocking {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        try {
+            val date=LocalDate.parse("2026-10-03");val w=NightWindow.forDate(date)
+            db.dao().upsertSession(SessionEntity("partial","",w.from*1000,(w.from+100)*1000,w.from+99,Json.encodeToString(EngineCfg()),48000,1.46,"MIC"))
+            for(t in listOf(30L,40L,45L,90L)) db.dao().insertSlice(SliceEntity("partial",w.from+t,ByteArray(64)))
+            db.dao().insertEvent(EventEntity("gap","partial",Channels.GAP,w.from+45,w.from+80,35,null,null))
+            val slices=NightData(ctx,db.dao()).load(date)["slices"]!!.jsonArray
+            assertEquals(listOf(0L,30L,40L,80L),slices.map { it.jsonObject["startT"]!!.jsonPrimitive.long-w.from })
+            assertEquals(listOf(30L,40L,45L,90L),slices.map { it.jsonObject["endT"]!!.jsonPrimitive.long-w.from })
+        } finally {db.close()}
+        Unit
+    }
+    @Test fun stalledMicrophoneDoesNotExtendOpenEventsOrCsvToWallClock() = runBlocking {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        try {
+            val date=LocalDate.parse("2026-10-03");val w=NightWindow.forDate(date)
+            db.dao().upsertSession(SessionEntity("stalled","",w.from*1000,null,w.from+19,Json.encodeToString(EngineCfg()),48000,1.46,"MIC"))
+            io.github.adrianss31.lowfreqhunter.service.MonitorBus.state.value=io.github.adrianss31.lowfreqhunter.service.MonitorBus.State(running=true,mode="rec",sessionId="stalled",lastDataAt=(w.from+20)*1000,activeBands=mapOf("A" to w.from+10))
+            val repo=NightData(ctx,db.dao());val night=repo.load(date)
+            assertEquals(w.from+20,night["events"]!!.jsonArray.single().jsonObject["endT"]!!.jsonPrimitive.long)
+            assertEquals(10L,night["summary"]!!.jsonObject["noiseSeconds"]!!.jsonPrimitive.long)
+            assertTrue(repo.eventsCsv(date).contains("\"${w.from+20}\""))
+        } finally {io.github.adrianss31.lowfreqhunter.service.MonitorBus.state.value=io.github.adrianss31.lowfreqhunter.service.MonitorBus.State();db.close()}
+        Unit
+    }
 }
