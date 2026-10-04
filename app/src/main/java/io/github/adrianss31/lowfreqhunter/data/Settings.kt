@@ -84,7 +84,7 @@ private fun lastOccurrenceMs(minOfDay: Int, now: Long, tz: java.util.TimeZone): 
     return cal.timeInMillis
 }
 
-/** Server LAN: dashboard consultabile dal PC mentre il telefono registra. */
+/** Server LAN opzionale: dashboard consultabile dal PC anche a registrazione ferma. */
 @Serializable
 data class LanCfg(
     val enabled: Boolean = false,

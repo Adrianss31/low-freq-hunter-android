@@ -105,8 +105,7 @@ class MonitorService : Service() {
     private var clipCount = 0
     private var clipWriter: ClipWriter? = null
     private var finalizing = false
-    private var lanServer: LanServer? = null
-    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    fun engineConfig(): EngineCfg = cfg
 
     // smussatori dei soli valori pubblicati alla UI/notifica/LAN: il motore
     // eventi e i campioni registrati continuano a usare i valori grezzi
@@ -211,36 +210,21 @@ class MonitorService : Service() {
         recorder = rec
         evCount = rec?.eventsCount?.value ?: 0
 
-        // server LAN per il monitoraggio dal PC (se abilitato nel Setup)
-        var lanUrl: String? = null
+        // Il server ha un servizio separato: rimane consultabile anche dopo REC.
         if (settings.lan.enabled && settings.lan.token.isNotBlank()) {
-            runCatching {
-                val srv = LanServer(this, dao, settings.lan.token, settings.lan.port, { cfg }, { settings.calib })
-                srv.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, true)
-                lanServer = srv
-                // a schermo spento Android addormenta il Wi-Fi: il PC vedrebbe
-                // buchi anche con la registrazione (locale) perfettamente viva
-                val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
-                wifiLock = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "lfh:lan").also {
-                    it.setReferenceCounted(false)
-                    it.acquire()
-                }
-                lanUrl = LanServer.deviceIp()?.let { ip ->
-                    "http://$ip:${settings.lan.port}/?k=${settings.lan.token}"
-                }
-            }
+            runCatching { LanDashboardService.sync(this) }.onFailure { MonitorBus.lanError.value = "Dashboard PC non avviata: ${it.message}" }
         }
 
         MonitorBus.resetSession()
         if (resume != null) preloadSession(dao, resume.id)
-        MonitorBus.state.value = MonitorBus.State(
+        MonitorBus.state.update { old -> MonitorBus.State(
             running = true,
             mode = if (listenOnly) "listen" else "rec",
             sessionId = rec?.sessionId,
             startedAt = rec?.startedAt ?: System.currentTimeMillis(),
             audioSource = cap.sourceName,
-            lanUrl = lanUrl,
-        )
+            lanUrl = old.lanUrl,
+        ) }
 
         val eng = NightEngine(cfg, sink)
         engine = eng
@@ -485,8 +469,8 @@ class MonitorService : Service() {
             eng.activeSince(Channels.VIB)?.let { active[Channels.VIB] = it }
         }
         val dom = uiDom.push(Bands.dominantHz(spec, binHz, NightEngine.WF_FMIN, NightEngine.WF_FMAX).first)
-        val prev = MonitorBus.state.value
-        MonitorBus.state.value = prev.copy(
+        MonitorBus.state.update { prev -> prev.copy(
+            lastDataAt = nowMs,
             eventsCount = evCount,
             activeBands = active,
             levels = levels,
@@ -494,7 +478,7 @@ class MonitorService : Service() {
             ref = uiRef.push(Bands.bandDb(spec, binHz, NightEngine.REF_LO, NightEngine.REF_HI), nowMs),
             domHz = dom,
             batteryPct = eng.batteryPct,
-        )
+        ) }
         // spettro per la UI: copia dei bin fino a 2 kHz
         val maxBins = minOf(spec.size, (2000.0 / binHz).toInt())
         MonitorBus.spectrum.value = MonitorBus.SpectrumFrame(spec.copyOf(maxBins), binHz, nowMs)
@@ -564,15 +548,12 @@ class MonitorService : Service() {
         running = false
         capture?.stop()
         vib?.stop()
-        lanServer?.let { runCatching { it.stop() } }
-        lanServer = null
-        wifiLock?.release()
-        wifiLock = null
         finishEngine(System.currentTimeMillis())
         clipWriter?.let { runCatching { it.close() } }
         clipWriter = null
         finishRecorder()
-        MonitorBus.state.value = MonitorBus.state.value.copy(running = false, mode = "", activeBands = emptyMap(), lanUrl = null)
+        MonitorBus.spectrum.value = null
+        MonitorBus.state.update { it.copy(running = false, mode = "", activeBands = emptyMap(), levels = emptyMap(), vibDb = null) }
         wakeLock?.release()
         wakeLock = null
         instance = null

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 object MonitorBus {
 
     data class State(
+        val lastDataAt: Long = 0,
         val running: Boolean = false,
         val mode: String = "",            // "rec" (sessione salvata) | "listen" (solo ascolto)
         val sessionId: String? = null,
@@ -27,6 +28,7 @@ object MonitorBus {
 
     class SpectrumFrame(val spec: FloatArray, val binHz: Double, val t: Long)
 
+    val lanError = MutableStateFlow<String?>(null)
     val error = MutableStateFlow<String?>(null)
     val state = MutableStateFlow(State())
     val spectrum = MutableStateFlow<SpectrumFrame?>(null)

@@ -325,7 +325,7 @@ fun SetupScreen() {
                     divider = false,
                 ) { RowCta("CONTROLLA") { AppUpdater.check(ctx) } }
             }
-            SettingRow("Monitor dal PC", "Live, archivio e impostazioni dal browser in LAN") {
+            SettingRow("Monitor dal PC", "Consultabile anche dopo lo stop · disattiva per chiudere il server") {
                 LfhSwitch(s.lan.enabled) {
                     set {
                         val token = it.lan.token.ifBlank { randomToken() }
@@ -334,11 +334,11 @@ fun SetupScreen() {
                 }
             }
             if (s.lan.enabled) {
-                val url = bus.lanUrl ?: LanServer.deviceIp()?.let { ip -> "http://$ip:${s.lan.port}/?k=${s.lan.token}" }
+                val url = bus.lanUrl
                 SettingRow(
                     url?.removePrefix("http://")?.substringBefore("/") ?: "Wi-Fi non connesso",
                     if (url == null) "Collega il telefono alla rete di casa"
-                    else if (bus.running) "Server attivo · token ${s.lan.token}" else "Il server parte insieme al monitoraggio",
+                    else "Server attivo anche con REC fermo · accesso con token",
                 ) {
                     if (url != null) RowCta("COPIA") {
                         copyText(ctx, url)

@@ -135,7 +135,7 @@ class LanServer(
         return buildJsonObject {
             MonitorBus.error.value?.let { put("error", it) }
             put("now", System.currentTimeMillis())
-            put("lastDataAt", MonitorBus.spectrum.value?.t ?: 0L)
+            put("lastDataAt", MonitorBus.spectrum.value?.t ?: st.lastDataAt)
             put("timezone", java.util.TimeZone.getDefault().id)
             put("nightDate", NightWindow.latest().toString())
             val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)

@@ -16,6 +16,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
+import io.github.adrianss31.lowfreqhunter.service.LanDashboardService
+import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.ui.AppShell
 import io.github.adrianss31.lowfreqhunter.ui.LfhTheme
 import io.github.adrianss31.lowfreqhunter.ui.Typefaces
@@ -33,6 +42,15 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         Typefaces.init(this)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                SettingsRepo.get(this@MainActivity).flow.map { it.lan }.distinctUntilChanged().collect { lan ->
+                    if (lan.enabled && lan.token.isNotBlank()) runCatching { LanDashboardService.sync(this@MainActivity) }
+                        .onFailure { MonitorBus.lanError.value = "Dashboard PC non avviata: ${it.message}" }
+                    else LanDashboardService.stop(this@MainActivity)
+                }
+            }
+        }
         requestNeededPermissions()
         requestIgnoreBatteryOptimizations()
         setContent {
