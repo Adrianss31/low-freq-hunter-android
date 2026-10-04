@@ -175,6 +175,25 @@ interface LfhDao {
     @Query("SELECT * FROM markers WHERE sessionId = :id AND t > :sinceT ORDER BY t")
     suspend fun markersSince(id: String, sinceT: Long): List<MarkerEntity>
 
+    // Letture limitate alla notte selezionata: mai inviare tutto l'archivio al PC.
+    @Query("SELECT * FROM sessions WHERE startedAt < :toMs AND COALESCE(endedAt, lastT * 1000 + 1000) > :fromMs ORDER BY startedAt")
+    suspend fun sessionsInRange(fromMs: Long, toMs: Long): List<SessionEntity>
+
+    @Query("SELECT * FROM samples WHERE sessionId = :id AND t >= :fromT AND t < :toT ORDER BY t")
+    suspend fun samplesInRange(id: String, fromT: Long, toT: Long): List<SampleEntity>
+
+    @Query("SELECT COUNT(*) FROM samples WHERE sessionId = :id AND t >= :fromT AND t < :toT")
+    suspend fun sampleCountInRange(id: String, fromT: Long, toT: Long): Long
+
+    @Query("SELECT * FROM events WHERE sessionId = :id AND endT > :fromT AND startT < :toT ORDER BY startT")
+    suspend fun eventsInRange(id: String, fromT: Long, toT: Long): List<EventEntity>
+
+    @Query("SELECT * FROM slices WHERE sessionId = :id AND t > :fromT AND t - 30 < :toT ORDER BY t")
+    suspend fun slicesInRange(id: String, fromT: Long, toT: Long): List<SliceEntity>
+
+    @Query("SELECT * FROM markers WHERE sessionId = :id AND t >= :fromT AND t < :toT ORDER BY t")
+    suspend fun markersInRange(id: String, fromT: Long, toT: Long): List<MarkerEntity>
+
     // rilievi (mappa casa)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSurvey(s: SurveyEntity)

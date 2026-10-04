@@ -74,6 +74,7 @@ class LanServer(
         }.getOrNull()
     }
 
+    private val nights = NightData(ctx, dao)
     private val b64 = Base64.getEncoder()
     private val jsonCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -85,6 +86,21 @@ class LanServer(
         return try {
             when {
                 uri == "/" || uri == "/index.html" -> dashboard()
+                uri == "/api/nights" -> {
+                    val date = nightDate(session.parms["anchor"])
+                    val count = session.parms["count"]?.toIntOrNull() ?: 16
+                    require(count in 1..16) { "Numero di notti non valido" }
+                    json(kotlinx.serialization.json.JsonArray(nights.summaries(date, count)).toString())
+                }
+                uri == "/api/night" -> json(nights.load(nightDate(session.parms["date"])).toString())
+                uri == "/api/night/levels" -> {
+                    val date = nightDate(session.parms["date"])
+                    val w = NightWindow.forDate(date)
+                    val from = session.parms["from"]?.let { it.toLongOrNull() ?: throw IllegalArgumentException("from non valido") } ?: w.from
+                    val to = session.parms["to"]?.let { it.toLongOrNull() ?: throw IllegalArgumentException("to non valido") } ?: w.to
+                    val cols = session.parms["cols"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("cols non valido") } ?: 1200
+                    json(nights.levels(date, from, to, cols).toString())
+                }
                 uri == "/api/state" -> json(apiState())
                 uri == "/api/spectrum" -> json(apiSpectrum())
                 uri == "/api/session" && session.method == Method.GET ->
@@ -97,6 +113,8 @@ class LanServer(
                 uri.startsWith("/api/session/") -> storedSession(uri)
                 else -> text(Response.Status.NOT_FOUND, "not found")
             }
+        } catch (e: IllegalArgumentException) {
+            text(Response.Status.BAD_REQUEST, e.message ?: "Richiesta non valida")
         } catch (e: Exception) {
             text(Response.Status.INTERNAL_ERROR, "errore: ${e.message}")
         }
@@ -104,19 +122,44 @@ class LanServer(
 
     // ── endpoint ────────────────────────────────────────────────────────────
 
+    private fun nightDate(raw: String?): java.time.LocalDate {
+        if (raw == null) return NightWindow.latest()
+        return runCatching { java.time.LocalDate.parse(raw) }.getOrElse { throw IllegalArgumentException("Data non valida") }
+            .also { require(it.year in 1970..2100) { "Data fuori intervallo" } }
+    }
+
     private fun apiState(): String {
         val st = MonitorBus.state.value
         val cfg = cfgProvider()
+        val battery = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         return buildJsonObject {
             MonitorBus.error.value?.let { put("error", it) }
             put("now", System.currentTimeMillis())
+            put("lastDataAt", MonitorBus.spectrum.value?.t ?: 0L)
+            put("timezone", java.util.TimeZone.getDefault().id)
+            put("nightDate", NightWindow.latest().toString())
+            val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            put("charging", status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL)
+            runCatching { android.os.StatFs(ctx.filesDir.absolutePath).availableBytes }.getOrNull()?.let { put("freeBytes", it) }
+            val settings = runBlocking { SettingsRepo.get(ctx).flow.first() }
+            if (settings.schedule.enabled && !st.running) {
+                val next = java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.HOUR_OF_DAY, settings.schedule.startMin / 60)
+                    set(java.util.Calendar.MINUTE, settings.schedule.startMin % 60)
+                    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+                    if (timeInMillis <= System.currentTimeMillis()) add(java.util.Calendar.DAY_OF_YEAR, 1)
+                }
+                put("nextStartAt", next.timeInMillis)
+            }
             put("running", st.running)
             put("mode", st.mode)
             put("sessionId", st.sessionId)
             put("startedAt", st.startedAt)
             put("eventsCount", st.eventsCount)
             put("audioSource", st.audioSource)
-            put("batteryPct", st.batteryPct)
+            val batteryLevel = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val batteryScale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+            put("batteryPct", if (batteryLevel >= 0 && batteryScale > 0) batteryLevel * 100 / batteryScale else st.batteryPct)
             put("ref", round1(st.ref))
             put("domHz", round1(st.domHz))
             st.vibDb?.let { put("vibDb", round1(it)) }
@@ -421,7 +464,7 @@ class LanServer(
     }
 
     private fun json(body: String): Response =
-        newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", body)
+        newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", body).apply { addHeader("Cache-Control", "no-store") }
 
     private fun text(status: Response.Status, body: String): Response =
         newFixedLengthResponse(status, "text/plain; charset=utf-8", body)
