@@ -295,6 +295,7 @@
     A.period=period;
     A.anchor=anchorFor();
     A.nights=[];
+    renderDiary();
     store();
     const date=latest ? A.anchor : (A.selected > A.anchor ? A.anchor : A.selected);
     renderPeriod();
@@ -480,7 +481,14 @@
     );
   }
   function renderDiary() {
-    if (!A.nights.length) return;
+    if (!A.nights.length) {
+      $("nightRows").replaceChildren();
+      $("nightIndicator").hidden=true;
+      for(const id of ["insightNights","insightStart","insightAverage"]) $(id).textContent="—";
+      $("insightNightsDetail").textContent="diario non disponibile";
+      $("insightEnd").textContent="in attesa dei dati";
+      return;
+    }
     const s = A.night?.summary;
     const comparable = A.nights.filter(
       (n) => n.recorded && !n.live && n.comparisonKey === s?.comparisonKey,
@@ -698,9 +706,10 @@
       const nextAnchor=anchorFor();
       if (!A.anchor || nextAnchor !== A.anchor) {
         const follow = !A.selected || A.selected === A.anchor;
+        const revision=selectedRevision,period=A.period;
         A.anchor = nextAnchor;
         await refreshNights();
-        if (follow || A.selected > A.anchor) await selectNight(A.anchor);
+        if (revision === selectedRevision && period === A.period && A.anchor === nextAnchor && (follow || A.selected > A.anchor)) await selectNight(A.anchor);
       }
       if (!A.night && A.selected) await selectNight(A.selected);
       if (s.running && M.liveStatus(s, true, now()).kind !== "stale") {

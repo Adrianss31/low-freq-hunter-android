@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -69,9 +68,3 @@ jobs:
           name: lowfreqhunter-apk
           path: lowfreqhunter.apk
 
-      - name: Pubblica release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: lowfreqhunter.apk

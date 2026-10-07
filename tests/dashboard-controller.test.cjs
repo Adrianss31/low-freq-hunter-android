@@ -270,6 +270,7 @@ function harness({period = "night"} = {}) {
     get renderer() {
       return renderer;
     },
+    setState(s) {state={...state,...s};},
     setHook(h) {
       hook = h;
     },
@@ -430,4 +431,25 @@ test("failed period load restores the period of the retained charts and exports"
   assert.equal(h.renderer.s.period,"night");assert.equal(h.renderer.s.night.period,"night");
   await h.nodes.get("exportCsv").onclick();
   assert.equal(h.downloads[0],`LFH_${current}_eventi.csv`);
+});
+
+test("unavailable diary on period switch cannot display the previous period rows or insights", async () => {
+  const h=harness();await h.flush();assert.ok(h.nodes.get("nightRows").children.length);
+  h.setHook(u=>u.pathname==="/api/nights"&&u.searchParams.get("period")==="day"?Promise.reject(new Error("unavailable")):undefined);
+  h.nodes.get("periodDay").onclick();await h.flush();
+  assert.equal(h.renderer.s.night.period,"day");
+  assert.equal(h.nodes.get("nightRows").children.length,0);
+  assert.equal(h.nodes.get("insightAverage").textContent,"—");
+  assert.ok(!h.nodes.get("insightNightsDetail").textContent.includes("notti"));
+});
+test("period anchor rollover cannot override an archive selection made during list loading", async () => {
+  const h=harness();await h.flush();const wait=deferred();
+  h.setState({nightDate:"2026-10-04"});
+  h.setHook(u=>u.pathname==="/api/nights"&&u.searchParams.get("anchor")==="2026-10-04"?wait.promise:undefined);
+  await h.advance(1000);
+  h.nodes.get("previousNight").onclick();await h.flush();
+  assert.equal(h.renderer.s.selected,archive);
+  wait.resolve([night("2026-10-04").summary,night(current).summary]);await h.flush();
+  assert.equal(h.renderer.s.selected,archive);
+  assert.equal(h.renderer.s.night.date,archive);
 });

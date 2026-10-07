@@ -26,6 +26,19 @@ class NightDataTest {
         assertEquals(13 * 3600L, NightWindow.forDate(LocalDate.parse("2026-10-24"), z).let { it.to-it.from })
         assertEquals(11 * 3600L, NightWindow.forDate(LocalDate.parse("2026-03-28"), z).let { it.to-it.from })
     }
+    @Test fun dayAndNightAnchorsFollowTheirOwnStartTimes() {
+        val zone=ZoneId.of("Europe/Rome")
+        for((time,day,night) in listOf(
+            Triple("2026-10-07T08:59:59+02:00","2026-10-06","2026-10-06"),
+            Triple("2026-10-07T09:00:00+02:00","2026-10-07","2026-10-06"),
+            Triple("2026-10-07T20:59:59+02:00","2026-10-07","2026-10-06"),
+            Triple("2026-10-07T21:00:00+02:00","2026-10-07","2026-10-07"),
+        )) {
+            val now=java.time.OffsetDateTime.parse(time).toInstant().toEpochMilli()
+            assertEquals(day,NightWindow.latest(now,zone,DashboardPeriod.DAY).toString())
+            assertEquals(night,NightWindow.latest(now,zone,DashboardPeriod.NIGHT).toString())
+        }
+    }
     @Test fun overlappingBandsCountOnceAndClipToWindow() {
         assertEquals(30L, NightMath.unionDuration(listOf(90L to 120L, 110L to 130L, 125L to 140L), 100, 130))
     }

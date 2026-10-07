@@ -173,3 +173,5 @@ versioni non vengono riscritte retroattivamente.
 La dashboard permette di scegliere **Giorno 09:00–21:00** oppure **Notte 21:00–09:00**, nel fuso orario del telefono. La data identifica l'inizio del periodo. La prima apertura mostra il giorno; la scelta viene ricordata nel browser. Il selettore di data e le frecce consentono di consultare anche periodi precedenti al diario recente. Grafici, riepiloghi e download seguono il periodo selezionato; il CSV e i PNG diurni hanno `giorno` nel nome.
 
 Le API storiche `/api/nights`, `/api/night`, `/api/night/levels` e `/api/night/eventi.csv` accettano `period=day` o `period=night`; senza parametro mantengono la vista notturna per compatibilità. `/api/state` espone `dayDate` e `nightDate`, le date dei periodi più recenti iniziati. Non è necessaria una migrazione dei dati.
+
+I rilasci firmati si pubblicano dall'artefatto della build riuscita su main: verificare versione, firma e checksum, creare una bozza sul commit verificato, confrontare il digest dell'asset e pubblicare come Latest. La creazione del tag non avvia un secondo caricamento che possa sostituire l'APK già verificato.
