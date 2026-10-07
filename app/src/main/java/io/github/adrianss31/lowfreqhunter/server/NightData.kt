@@ -15,15 +15,22 @@ typealias NightPayload = JsonObject
 typealias NightSummary = JsonObject
 typealias LevelPayload = JsonObject
 
-data class NightWindow(val date: LocalDate, val from: Long, val to: Long) {
+enum class DashboardPeriod(val id: String) {
+    DAY("day"), NIGHT("night");
     companion object {
-        fun forDate(date: LocalDate, zone: ZoneId = ZoneId.systemDefault()) = NightWindow(
-            date, date.atTime(21, 0).atZone(zone).toEpochSecond(),
-            date.plusDays(1).atTime(9, 0).atZone(zone).toEpochSecond(),
-        )
-        fun latest(now: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): LocalDate {
+        fun parse(raw: String?): DashboardPeriod = entries.firstOrNull { it.id == (raw ?: "night") }
+            ?: throw IllegalArgumentException("Periodo non valido")
+    }
+}
+
+data class NightWindow(val date: LocalDate, val from: Long, val to: Long, val period: DashboardPeriod = DashboardPeriod.NIGHT) {
+    companion object {
+        fun forDate(date: LocalDate, zone: ZoneId = ZoneId.systemDefault(), period: DashboardPeriod = DashboardPeriod.NIGHT) =
+            if (period == DashboardPeriod.DAY) NightWindow(date, date.atTime(9, 0).atZone(zone).toEpochSecond(), date.atTime(21, 0).atZone(zone).toEpochSecond(), period)
+            else NightWindow(date, date.atTime(21, 0).atZone(zone).toEpochSecond(), date.plusDays(1).atTime(9, 0).atZone(zone).toEpochSecond(), period)
+        fun latest(now: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault(), period: DashboardPeriod = DashboardPeriod.NIGHT): LocalDate {
             val t = java.time.Instant.ofEpochMilli(now).atZone(zone)
-            return if (t.hour >= 21) t.toLocalDate() else t.toLocalDate().minusDays(1)
+            return if (t.hour >= (if(period == DashboardPeriod.DAY) 9 else 21)) t.toLocalDate() else t.toLocalDate().minusDays(1)
         }
     }
 }
@@ -137,7 +144,7 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             }
         }
         return buildJsonObject {
-            put("date",w.date.toString()); put("from",w.from); put("to",w.to); put("recorded",count>0)
+            put("period",w.period.id); put("date",w.date.toString()); put("from",w.from); put("to",w.to); put("recorded",count>0)
             put("comparisonKey", ss.map { session ->
                 val device = runCatching { codec.parseToJsonElement(session.deviceJson).jsonObject.filterKeys { it != "app_version" } }.getOrDefault(emptyMap())
                 listOf(session.cfgJson, session.audioSource, session.contextJson, JsonObject(device).toString()).joinToString("|")
@@ -152,13 +159,13 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             putJsonArray("hours") { hours.forEach { (t,v)->add(buildJsonObject { put("t",t); put("value",v?.let(::JsonPrimitive) ?: JsonNull) }) } }
         }
     }
-    @Synchronized fun summaries(anchor: LocalDate,count: Int): List<NightSummary> = (0 until count.coerceIn(1,16)).map { i ->
-        val w=NightWindow.forDate(anchor.minusDays(i.toLong())); summary(w,sessions(w))
+    @Synchronized fun summaries(anchor: LocalDate,count: Int,period: DashboardPeriod = DashboardPeriod.NIGHT): List<NightSummary> = (0 until count.coerceIn(1,16)).map { i ->
+        val w=NightWindow.forDate(anchor.minusDays(i.toLong()),period=period); summary(w,sessions(w))
     }
-    @Synchronized fun load(date: LocalDate): NightPayload {
-        val w=NightWindow.forDate(date); val ss=sessions(w); val st=MonitorBus.state.value
+    @Synchronized fun load(date: LocalDate,period: DashboardPeriod = DashboardPeriod.NIGHT): NightPayload {
+        val w=NightWindow.forDate(date,period=period); val ss=sessions(w); val st=MonitorBus.state.value
         return buildJsonObject {
-            put("date",date.toString()); put("from",w.from); put("to",w.to); put("timezone",ZoneId.systemDefault().id)
+            put("period",period.id); put("date",date.toString()); put("from",w.from); put("to",w.to); put("timezone",ZoneId.systemDefault().id)
             put("summary",summary(w,ss)); put("events",allEvents(ss,w))
             putJsonObject("encoding") { put("fmin",20);put("fmax",200);put("bins",64);put("seconds",30);put("minDb",-110);put("maxDb",-20) }
             val channels=linkedMapOf<String,JsonObject>()
@@ -197,9 +204,9 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             }) }
         }
     }
-    /** Events are clipped to the selected night; gap rows retain their unavailable-data meaning. */
-    @Synchronized fun eventsCsv(date: LocalDate): String {
-        val w=NightWindow.forDate(date)
+    /** Events are clipped to the selected period; gap rows retain their unavailable-data meaning. */
+    @Synchronized fun eventsCsv(date: LocalDate,period: DashboardPeriod = DashboardPeriod.NIGHT): String {
+        val w=NightWindow.forDate(date,period=period)
         val ss=sessions(w)
         val rows=mutableListOf<List<String>>()
         fun row(s: SessionEntity?,id: String,band: String,kind: String,a: Long,b: Long,peak: Double?,active: Boolean=false) {
@@ -228,8 +235,8 @@ class NightData(private val ctx: Context, private val dao: LfhDao) {
             rows.sortedBy { it[6].toLong() }.forEach { append(it.joinToString(",",transform=::csv));append('\n') }
         }
     }
-    @Synchronized fun levels(date: LocalDate,from: Long,to: Long,cols: Int): LevelPayload {
-        val w=NightWindow.forDate(date)
+    @Synchronized fun levels(date: LocalDate,from: Long,to: Long,cols: Int,period: DashboardPeriod = DashboardPeriod.NIGHT): LevelPayload {
+        val w=NightWindow.forDate(date,period=period)
         require(from>=w.from && to<=w.to && to>from && cols in 1..2000) { "Intervallo o risoluzione non validi" }
         val ss=sessions(w)
         val points=ss.flatMap { s ->

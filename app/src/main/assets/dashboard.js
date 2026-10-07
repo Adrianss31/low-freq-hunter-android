@@ -29,6 +29,7 @@
     lastOnline: 0,
     offset: 0,
     zone: "UTC",
+    period: "day",
     nights: [],
     night: null,
     data: null,
@@ -63,6 +64,7 @@
     try {
       const v = JSON.parse(localStorage.getItem("lfh.pc.v4") || "{}");
       A.prefs = { ...A.prefs, ...v.prefs };
+      A.period = v.period === "night" ? "night" : "day";
       A.muteUntil = Number(v.muteUntil) || 0;
       A.palette = ["caldo", "arancio", "grigio"].includes(v.palette)
         ? v.palette
@@ -74,6 +76,7 @@
       localStorage.setItem(
         "lfh.pc.v4",
         JSON.stringify({
+          period: A.period,
           prefs: A.prefs,
           muteUntil: A.muteUntil,
           palette: A.palette,
@@ -253,24 +256,80 @@
         : "non disponibile";
     $("qualityError").textContent = s?.error || "";
   }
+  function anchorFor(period = A.period) {
+    return period === "night" ? A.state?.nightDate : A.state?.dayDate;
+  }
+  function shiftDate(date, days) {
+    const [y,m,d] = date.split("-").map(Number);
+    return new Date(Date.UTC(y,m-1,d+days)).toISOString().slice(0,10);
+  }
+  function periodLabel(period = A.night?.period || A.period) {
+    return period === "day" ? "giorno" : "notte";
+  }
+  function renderPeriod() {
+    const day = (A.night?.period || A.period) === "day";
+    $("periodDay").classList.toggle("selected",A.period === "day");
+    $("periodNight").classList.toggle("selected",A.period === "night");
+    $("periodDay").setAttribute("aria-pressed",String(A.period === "day"));
+    $("periodNight").setAttribute("aria-pressed",String(A.period === "night"));
+    $("historyDate").min = "1970-01-01";
+    $("historyDate").max = anchorFor() || "2100-12-31";
+    if(A.selected) $("historyDate").value = A.selected;
+    $("previousNight").setAttribute("aria-label",day ? "Giorno precedente" : "Notte precedente");
+    $("nextNight").setAttribute("aria-label",day ? "Giorno successivo" : "Notte successiva");
+    $("resetZoom").textContent = day ? "TUTTO IL GIORNO ✕" : "TUTTA LA NOTTE ✕";
+    $("overviewLabel").textContent = day ? "GIORNO" : "NOTTE";
+    $("diaryTitle").textContent = day ? "DIARIO · GIORNI 09–21" : "DIARIO · NOTTI 21–09";
+    $("insightCountLabel").textContent = day ? "GIORNI CON RUMORE" : "NOTTI CON RUMORE";
+    $("insightMeanLabel").textContent = day ? "MEDIA AL GIORNO" : "MEDIA A NOTTE";
+    $("gapsPeriodLabel").textContent = "Buchi nel periodo";
+    $("resetHelp").textContent = day ? "DOPPIO CLIC / ESC = TUTTO IL GIORNO" : "DOPPIO CLIC / ESC = TUTTA LA NOTTE";
+    $("periodNavHelp").textContent = day ? "[ ] = GIORNO PREC./SUCC." : "[ ] = NOTTE PREC./SUCC.";
+    $("diaryHours").replaceChildren(...(day ? ["09","12","15","18"] : ["21","00","03","06"]).map(h=>{
+      const el=document.createElement("span");el.textContent=h;return el;
+    }));
+  }
+  async function changePeriod(period) {
+    if(A.period === period) return;
+    const latest = !A.selected || A.selected === A.anchor;
+    A.period=period;
+    A.anchor=anchorFor();
+    A.nights=[];
+    store();
+    const date=latest ? A.anchor : (A.selected > A.anchor ? A.anchor : A.selected);
+    renderPeriod();
+    refreshNights();
+    if(date) await selectNight(date);
+  }
+  $("periodDay").onclick=()=>changePeriod("day");
+  $("periodNight").onclick=()=>changePeriod("night");
+  $("historyDate").onchange=()=>{
+    const date=$("historyDate").value;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < "1970-01-01" || date > A.anchor) {
+      toast("Scegli una data fino all'ultimo periodo disponibile",true);
+      renderPeriod();return;
+    }
+    selectNight(date);
+  };
+  renderPeriod();
   let statsMotion = null;
   function renderSession(animate = false, old = null) {
     const n = A.night;
     if (!n) return;
     const s = n.summary;
-    const i = A.nights.findIndex((x) => x.date === n.date);
-    $("previousNight").disabled = i < 0 || i >= A.nights.length - 1;
-    $("nextNight").disabled = i <= 0;
+    const day = n.period === "day";
+    $("previousNight").disabled = n.date <= "1970-01-01";
+    $("nextNight").disabled = n.date >= A.anchor;
     $("sessionKind").textContent = !s.recorded
-      ? "NON REGISTRATA"
+      ? (day ? "NON REGISTRATO" : "NON REGISTRATA")
       : s.live
-        ? "STANOTTE · IN CORSO"
-        : n.date === A.anchor
-          ? "ULTIMA NOTTE · CHIUSA"
-          : `${i} ${i === 1 ? "NOTTE" : "NOTTI"} FA`;
+        ? (day ? "GIORNO · IN CORSO" : "NOTTE · IN CORSO")
+        : (day ? "GIORNO 09–21 · CHIUSO" : "NOTTE 21–09 · CHIUSA");
     $("sessionKind").classList.toggle("accent", s.live);
-    $("sessionDate").textContent =
-      `${fmtDate(n.from, { weekday: "short", day: "numeric" })} → ${fmtDate(n.to - 1, { weekday: "short", day: "numeric", month: "short" })}`;
+    $("sessionDate").textContent = day
+      ? fmtDate(n.from,{weekday:"short",day:"numeric",month:"short"})
+      : `${fmtDate(n.from, { weekday: "short", day: "numeric" })} → ${fmtDate(n.to - 1, { weekday: "short", day: "numeric", month: "short" })}`;
+    renderPeriod();
     const comp = M.comparison(A.nights, s);
     const deltaText = (v) =>
       v == null
@@ -429,8 +488,8 @@
     const noisy = comparable.filter((n) => n.noiseSeconds >= 1800);
     $("insightNights").textContent = `${noisy.length}/${comparable.length}`;
     $("insightNightsDetail").textContent = comparable.length
-      ? "notti registrate confrontabili"
-      : "nessuna notte confrontabile";
+      ? periodLabel() === "giorno" ? "giorni registrati confrontabili" : "notti registrate confrontabili"
+      : "nessun periodo confrontabile";
     const starts = comparable.filter((n) => n.noiseStart != null);
     const medianStart = M.median(starts.map((n) => n.noiseStart - n.from));
     const medianEnd = M.median(starts.map((n) => n.noiseEnd - n.from));
@@ -458,8 +517,8 @@
         label.textContent =
           i === 0
             ? n.live
-              ? "stanotte"
-              : "ultima notte"
+              ? (A.period === "day" ? "giorno in corso" : "stanotte")
+              : (A.period === "day" ? "ultimo giorno" : "ultima notte")
             : fmtDate(n.from, {
                 weekday: "short",
                 day: "numeric",
@@ -467,13 +526,11 @@
               });
         const cells = document.createElement("span");
         cells.className = "hour-cells";
-        for (let j = 0; j < 12; j++) {
-          const hh = (21 + j) % 24;
-          const values = (n.hours || [])
-            .filter((h) => Number(M.clock(h.t, A.zone).slice(0, 2)) === hh)
-            .map((h) => h.value)
-            .filter(M.finite);
-          const value = values.length ? Math.max(...values) : null;
+        const hours = n.hours?.length ? n.hours : Array.from({length:Math.round((n.to-n.from)/3600)},(_,j)=>({t:n.from+j*3600,value:null}));
+        cells.style.setProperty("--hours",hours.length);
+        for (const h of hours) {
+          const hh = M.clock(h.t,A.zone);
+          const value = M.finite(h.value) ? h.value : null;
           const cell = document.createElement("i");
           cell.style.background =
             value == null
@@ -482,7 +539,7 @@
                 : "transparent"
               : heatColor(value);
           cell.classList.toggle("missing", !n.recorded);
-          cell.title = `${String(hh).padStart(2, "0")}:00 · ${value == null ? "nessuna misura" : `${value >= 0 ? "+" : ""}${value.toFixed(1)} dB vs soglia`}`;
+          cell.title = `${hh} · ${value == null ? "nessuna misura" : `${value >= 0 ? "+" : ""}${value.toFixed(1)} dB vs soglia`}`;
           cells.append(cell);
         }
         const total = document.createElement("span");
@@ -526,7 +583,9 @@
   async function refreshNights() {
     if (!A.anchor) return;
     try {
-      const result = await api("/api/nights?anchor=" + A.anchor + "&count=16");
+      const period=A.period,anchor=A.anchor;
+      const result = await api(`/api/nights?anchor=${anchor}&count=16&period=${period}`);
+      if(A.period !== period || A.anchor !== anchor) return;
       A.nights = result;
       renderDiary();
       renderHeader();
@@ -541,6 +600,7 @@
       (A.pendingNight !== null || A.selected !== date || A.night?.date !== date)
     )
       return;
+    const period=A.period;
     const id = gate.next();
     selectedRevision++;
     A.pendingNight = id;
@@ -552,14 +612,15 @@
       nextIndex = A.nights.findIndex((n) => n.date === date);
     A.selected = date;
     if (!refresh) {
-      $("loadState").textContent = "Caricamento della notte…";
+      $("loadState").textContent = "Caricamento del periodo…";
       $("loadState").hidden = false;
     }
     try {
-      const data = await api("/api/night?date=" + date, {
+      const data = await api(`/api/night?date=${date}&period=${period}`, {
         signal: nightAbort.signal,
       });
       if (!gate.current(id)) return;
+      if(A.period !== period) return;
       A.night = data;
       A.data = M.decodeSlices(data);
       A.zone = data.timezone || A.zone;
@@ -579,8 +640,14 @@
       if (e.name === "AbortError") return;
       if (!gate.current(id)) return;
       A.selected = previous?.date || date;
+      if(previous && previous.period !== A.period) {
+        A.period=previous.period;
+        A.anchor=anchorFor();
+        A.nights=[];store();refreshNights();
+      }
+      renderPeriod();
       $("loadState").textContent = e.message;
-      toast("Notte non caricata: " + e.message, true);
+      toast("Periodo non caricato: " + e.message, true);
       renderDiary();
     } finally {
       if (A.pendingNight === id) A.pendingNight = null;
@@ -589,7 +656,8 @@
   async function loadLevels() {
     if (!A.night || !R.target) return;
     const id = levelGate.next(),
-      date = A.night.date;
+      date = A.night.date,
+      period = A.night.period || "night";
     levelsAbort?.abort();
     levelsAbort = new AbortController();
     const v = R.target;
@@ -597,10 +665,10 @@
       to = Math.min(A.night.to, Math.ceil(v.t1));
     try {
       const result = await api(
-        `/api/night/levels?date=${date}&from=${from}&to=${to}&cols=${Math.min(2000, Math.max(200, Math.round($("waterfall").clientWidth)))}`,
+        `/api/night/levels?date=${date}&period=${period}&from=${from}&to=${to}&cols=${Math.min(2000, Math.max(200, Math.round($("waterfall").clientWidth)))}`,
         { signal: levelsAbort.signal },
       );
-      if (levelGate.current(id) && A.night?.date === date) {
+      if (levelGate.current(id) && A.night?.date === date && A.night?.period === period) {
         A.levels = result.points || [];
         R.invalidate();
       }
@@ -627,10 +695,12 @@
       A.online = true;
       A.lastOnline = Date.now();
       emit(alerts.observe(s, now(), Date.now()));
-      if (!A.anchor || s.nightDate !== A.anchor) {
-        A.anchor = s.nightDate;
+      const nextAnchor=anchorFor();
+      if (!A.anchor || nextAnchor !== A.anchor) {
+        const follow = !A.selected || A.selected === A.anchor;
+        A.anchor = nextAnchor;
         await refreshNights();
-        if (!A.selected || A.selected > A.anchor) await selectNight(A.anchor);
+        if (follow || A.selected > A.anchor) await selectNight(A.anchor);
       }
       if (!A.night && A.selected) await selectNight(A.selected);
       if (s.running && M.liveStatus(s, true, now()).kind !== "stale") {
@@ -684,9 +754,9 @@
     R.invalidate();
   }
   function moveNight(delta) {
-    const i = A.nights.findIndex((n) => n.date === A.selected);
-    const n = A.nights[i + delta];
-    if (n) selectNight(n.date);
+    if(!A.selected) return;
+    const date=shiftDate(A.selected,-delta);
+    if(date >= "1970-01-01" && date <= A.anchor) selectNight(date);
   }
   $("previousNight").onclick = () => moveNight(1);
   $("nextNight").onclick = () => moveNight(-1);
@@ -1290,10 +1360,10 @@
     );
   }
   $("exportPng").onclick = async () => {
-    const date = A.night?.date;
+    const date = A.night?.date, period=A.night?.period;
     if (!date) return;
     try {
-      await saveBlob(await canvasBlob(R.exportView()), `LFH_${date}_vista.png`);
+      await saveBlob(await canvasBlob(R.exportView()), `LFH_${date}_${period === "day" ? "giorno_" : ""}vista.png`);
       toast("PNG della vista creato");
     } catch (e) {
       toast(e.message, true);
@@ -1304,30 +1374,30 @@
     if (!n) return;
     try {
       const result = await api(
-        `/api/night/levels?date=${n.date}&from=${n.from}&to=${n.to}&cols=2000`,
+        `/api/night/levels?date=${n.date}&period=${n.period}&from=${n.from}&to=${n.to}&cols=2000`,
       );
-      if (A.selected !== n.date || A.night?.date !== n.date)
+      if (A.selected !== n.date || A.night !== n || A.period !== n.period)
         throw new Error(
-          "Notte cambiata: ripeti il report sulla notte selezionata",
+          "Periodo cambiato: ripeti il report sul periodo selezionato",
         );
       await saveBlob(
         await canvasBlob(R.exportReport(result.points)),
-        `LFH_${n.date}_report.png`,
+        `LFH_${n.date}_${n.period === "day" ? "giorno_" : ""}report.png`,
       );
-      toast("Report della notte creato");
+      toast("Report del periodo creato");
     } catch (e) {
       toast(e.message, true);
     }
   };
   $("exportCsv").onclick = async () => {
-    const date = A.night?.date;
+    const date = A.night?.date, period=A.night?.period;
     if (!date) return;
     try {
-      const blob = await api("/api/night/eventi.csv?date=" + date, {}, (r) =>
+      const blob = await api(`/api/night/eventi.csv?date=${date}&period=${period}`, {}, (r) =>
         r.blob(),
       );
-      await saveBlob(blob, `LFH_${date}_eventi.csv`);
-      toast("CSV della notte scaricato");
+      await saveBlob(blob, `LFH_${date}_${period === "day" ? "giorno_" : ""}eventi.csv`);
+      toast("CSV del periodo scaricato");
     } catch (e) {
       toast(e.message, true);
     }

@@ -167,3 +167,9 @@ Restano necessarie prove su dispositivo per registrazione notturna prolungata,
 Doze, permessi OEM, avvio programmato e conferma dell'installer. I test JVM non
 simulano la risposta fisica del microfono. Le statistiche già salvate da vecchie
 versioni non vengono riscritte retroattivamente.
+
+### Storico PC: giorno e notte
+
+La dashboard permette di scegliere **Giorno 09:00–21:00** oppure **Notte 21:00–09:00**, nel fuso orario del telefono. La data identifica l'inizio del periodo. La prima apertura mostra il giorno; la scelta viene ricordata nel browser. Il selettore di data e le frecce consentono di consultare anche periodi precedenti al diario recente. Grafici, riepiloghi e download seguono il periodo selezionato; il CSV e i PNG diurni hanno `giorno` nel nome.
+
+Le API storiche `/api/nights`, `/api/night`, `/api/night/levels` e `/api/night/eventi.csv` accettano `period=day` o `period=night`; senza parametro mantengono la vista notturna per compatibilità. `/api/state` espone `dayDate` e `nightDate`, le date dei periodi più recenti iniziati. Non è necessaria una migrazione dei dati.

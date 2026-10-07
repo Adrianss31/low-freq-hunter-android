@@ -718,7 +718,7 @@ a {
 }
 .hour-cells {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(var(--hours, 12), 1fr);
   gap: 2px;
 }
 .hour-cells i {
@@ -1323,3 +1323,7 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+.history-controls { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:18px 0 10px; }
+.history-controls > label { font:600 10px var(--mono); color:var(--dim); }
+.history-controls input { border:1px solid #b1aea5; border-radius:6px; padding:8px; background:var(--paper); color:var(--ink); font:500 12px var(--mono); }

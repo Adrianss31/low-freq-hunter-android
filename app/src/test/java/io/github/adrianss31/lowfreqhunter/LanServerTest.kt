@@ -84,4 +84,57 @@ class LanServerTest {
         } finally {db.close()}
         Unit
     }
+    @Test fun daytimeIncludesNoonAndClipsExportsAtNineAndTwentyOne() = runBlocking {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        try {
+            val date=LocalDate.parse("2026-10-03")
+            val start=date.atTime(9,0).atZone(java.time.ZoneId.systemDefault()).toEpochSecond()
+            val end=date.atTime(21,0).atZone(java.time.ZoneId.systemDefault()).toEpochSecond()
+            val noon=start+3*3600
+            db.dao().upsertSession(SessionEntity("daytime","Day",(start-100)*1000,(end+100)*1000,end,Json.encodeToString(EngineCfg()),48000,1.46,"MIC"))
+            db.dao().insertSamples(listOf(SampleEntity("daytime",noon,"{\"A\":-40}",-60.0,62.0,null,80)))
+            db.dao().insertSlice(SliceEntity("daytime",noon+30,ByteArray(64)))
+            db.dao().insertEvent(EventEntity("all-day","daytime","A",start-10,end+10,end-start+20,-40.0,-50.0))
+            val server=LanServer(ctx,db.dao(),"test-key",0,{EngineCfg()})
+            val args=mapOf("k" to "test-key","date" to date.toString(),"period" to "day")
+            val r=server.serve(request("/api/night",args))
+            assertEquals(200,r.status.requestStatus)
+            val day=Json.parseToJsonElement(r.data.bufferedReader().readText()).jsonObject
+            assertTrue("Noon sample must be visible",day["summary"]!!.jsonObject["recorded"]!!.jsonPrimitive.boolean)
+            assertEquals(start,day["from"]!!.jsonPrimitive.long);assertEquals(end,day["to"]!!.jsonPrimitive.long)
+            assertEquals(1,day["slices"]!!.jsonArray.size)
+            val event=day["events"]!!.jsonArray.single().jsonObject
+            assertEquals(start,event["startT"]!!.jsonPrimitive.long);assertEquals(end,event["endT"]!!.jsonPrimitive.long)
+            val levels=server.serve(request("/api/night/levels",args))
+            assertEquals(200,levels.status.requestStatus)
+            assertEquals(1,Json.parseToJsonElement(levels.data.bufferedReader().readText()).jsonObject["points"]!!.jsonArray.size)
+            val csv=server.serve(request("/api/night/eventi.csv",args)).data.bufferedReader().readText()
+            assertTrue(csv.contains("\"$start\",\"$end\""));assertFalse(csv.contains((start-10).toString()))
+            val list=server.serve(request("/api/nights",args+mapOf("anchor" to date.toString(),"count" to "2")))
+            val summaries=Json.parseToJsonElement(list.data.bufferedReader().readText()).jsonArray
+            assertTrue(summaries[0].jsonObject["recorded"]!!.jsonPrimitive.boolean)
+            assertFalse(summaries[1].jsonObject["recorded"]!!.jsonPrimitive.boolean)
+            // Legacy callers still get a night, and therefore no noon measurements.
+            val legacy=server.serve(request("/api/night",args-"period"))
+            assertFalse(Json.parseToJsonElement(legacy.data.bufferedReader().readText()).jsonObject["summary"]!!.jsonObject["recorded"]!!.jsonPrimitive.boolean)
+        } finally {db.close()}
+        Unit
+    }
+    @Test fun dayWindowUsesPhoneTimezoneAcrossClockChangesAndRejectsUnknownPeriod() {
+        val ctx=ApplicationProvider.getApplicationContext<Context>();val db=Room.inMemoryDatabaseBuilder(ctx,LfhDb::class.java).build()
+        val previous=java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Rome"))
+            val server=LanServer(ctx,db.dao(),"test-key",0,{EngineCfg()})
+            for((date,hours) in listOf("2026-03-29" to 12,"2026-10-25" to 12)) {
+                val r=server.serve(request("/api/night",mapOf("k" to "test-key","date" to date,"period" to "day")))
+                val day=Json.parseToJsonElement(r.data.bufferedReader().readText()).jsonObject
+                assertEquals(hours*3600L,day["to"]!!.jsonPrimitive.long-day["from"]!!.jsonPrimitive.long)
+                assertEquals("Europe/Rome",day["timezone"]!!.jsonPrimitive.content)
+            }
+            assertEquals(400,server.serve(request("/api/night",mapOf("k" to "test-key","period" to "invalid"))).status.requestStatus)
+            assertEquals(401,server.serve(request("/api/night",mapOf("period" to "day"))).status.requestStatus)
+        } finally {java.util.TimeZone.setDefault(previous);db.close()}
+    }
+
 }

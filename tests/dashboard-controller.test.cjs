@@ -12,10 +12,11 @@ const source = fs.readFileSync(
 const current = "2026-10-03",
   archive = "2026-10-02";
 const from = Date.parse("2026-10-03T21:00:00Z") / 1000;
-function night(date) {
-  const start = from - (date === archive ? 86400 : 0);
+function night(date, period = "night") {
+  const start = from - (date === archive ? 86400 : 0) - (period === "day" ? 12*3600 : 0);
   return {
     date,
+    period,
     from: start,
     to: start + 43200,
     timezone: "UTC",
@@ -52,7 +53,7 @@ function deferred() {
   const promise = new Promise((r) => (resolve = r));
   return { promise, resolve };
 }
-function harness() {
+function harness({period = "night"} = {}) {
   let time = Date.parse("2026-10-04T01:00:00Z"),
     serial = 0;
   const nodes = new Map(),
@@ -130,6 +131,7 @@ function harness() {
     now: time,
     lastDataAt: time,
     nightDate: current,
+    dayDate: current,
     timezone: "UTC",
     startedAt: from * 1000,
     activeBands: {},
@@ -164,7 +166,7 @@ function harness() {
       return { toBlob: (cb) => cb({}) };
     }
     exportView() {
-      return { toBlob: (cb) => cb({}) };
+      return { toBlob: (cb) => this.waitView ? this.waitView.then(()=>cb({})) : cb({}) };
     }
     resize() {}
   }
@@ -203,9 +205,9 @@ function harness() {
     else if (u.pathname === "/api/state")
       data = { ...state, now: time, lastDataAt: time };
     else if (u.pathname === "/api/nights")
-      data = [night(current).summary, night(archive).summary];
+      data = [night(current,u.searchParams.get("period") || "night").summary, night(archive,u.searchParams.get("period") || "night").summary];
     else if (u.pathname === "/api/night")
-      data = night(u.searchParams.get("date"));
+      data = night(u.searchParams.get("date"),u.searchParams.get("period") || "night");
     else if (u.pathname === "/api/night/levels")
       data = { points: [{ date: u.searchParams.get("date") }] };
     else data = { ok: true };
@@ -225,7 +227,7 @@ function harness() {
     location: { search: "?k=test" },
     localStorage: {
       getItem() {
-        return null;
+        return period ? JSON.stringify({period}) : null;
       },
       setItem() {},
     },
@@ -374,4 +376,58 @@ test("CSV keeps its original night filename after navigation", async () => {
   wait.resolve({});
   await job;
   assert.equal(h.downloads[0], `LFH_${current}_eventi.csv`);
+});
+
+test("default daytime view requests nine-to-twenty-one data and report", async () => {
+  const h=harness({period:null});await h.flush();
+  assert.equal(h.renderer.s.night.from,Date.parse("2026-10-03T09:00:00Z")/1000);
+  assert.equal(h.renderer.s.night.to,Date.parse("2026-10-03T21:00:00Z")/1000);
+  assert.ok(h.requests.filter(u=>["/api/nights","/api/night","/api/night/levels"].includes(u.pathname)).every(u=>u.searchParams.get("period")==="day"));
+  await h.nodes.get("exportReport").onclick();
+  assert.equal(h.downloads[0],`LFH_${current}_giorno_report.png`);
+  await h.nodes.get("exportCsv").onclick();
+  assert.equal(h.downloads[1],`LFH_${current}_giorno_eventi.csv`);
+});
+test("switching period rejects a report for the same date in the previous period", async () => {
+  const h=harness();await h.flush();const wait=deferred();
+  h.setHook(u=>u.pathname==="/api/night/levels"&&u.searchParams.get("period")==="night" ? wait.promise:undefined);
+  const report=h.nodes.get("exportReport").onclick();await h.flush();
+  h.nodes.get("periodDay").onclick();await h.flush();
+  assert.equal(h.renderer.s.night.period,"day");
+  wait.resolve({points:[]});await report;
+  assert.equal(h.downloads.length,0);
+  assert.equal(h.renderer.target.t1-h.renderer.target.t0,43200);
+});
+test("date picker loads an older day beyond the recent diary", async () => {
+  const h=harness({period:null});await h.flush();
+  const picker=h.nodes.get("historyDate");picker.value="2026-09-01";picker.onchange();await h.flush();
+  assert.equal(h.renderer.s.night.date,"2026-09-01");
+  assert.equal(h.renderer.s.night.period,"day");
+  assert.equal(h.nodes.get("previousNight").disabled,false);
+  assert.equal(h.nodes.get("nextNight").disabled,false);
+});
+test("period switch during a pending navigation ignores the old response", async () => {
+  const h=harness();await h.flush();const wait=deferred();
+  h.setHook(u=>u.pathname==="/api/night"&&u.searchParams.get("period")==="night"&&u.searchParams.get("date")===archive?wait.promise:undefined);
+  h.nodes.get("previousNight").onclick();await h.flush();
+  h.nodes.get("periodDay").onclick();await h.flush();
+  wait.resolve(night(archive));await h.flush();
+  assert.equal(h.renderer.s.night.period,"day");
+  assert.equal(h.renderer.target.t1-h.renderer.target.t0,43200);
+});
+
+test("view PNG retains its original period filename during a period switch", async () => {
+  const h=harness();await h.flush();const wait=deferred();h.renderer.waitView=wait.promise;
+  const download=h.nodes.get("exportPng").onclick();await h.flush();
+  h.nodes.get("periodDay").onclick();await h.flush();
+  wait.resolve();await download;
+  assert.equal(h.downloads[0],`LFH_${current}_vista.png`);
+});
+test("failed period load restores the period of the retained charts and exports", async () => {
+  const h=harness();await h.flush();
+  h.setHook(u=>u.pathname==="/api/night"&&u.searchParams.get("period")==="day"?Promise.reject(new Error("unavailable")):undefined);
+  h.nodes.get("periodDay").onclick();await h.flush();
+  assert.equal(h.renderer.s.period,"night");assert.equal(h.renderer.s.night.period,"night");
+  await h.nodes.get("exportCsv").onclick();
+  assert.equal(h.downloads[0],`LFH_${current}_eventi.csv`);
 });

@@ -977,7 +977,7 @@
       g.fillRect(0, 0, w, h);
       g.fillStyle = LIGHT;
       g.font = '600 12px "Geist Mono", monospace';
-      g.fillText("LFH · SPETTROGRAMMA · " + this.s.night.date, axis, 22);
+      g.fillText("LFH · SPETTROGRAMMA · " + this.s.night.date + (this.s.night.period === "day" ? " · GIORNO 09–21" : " · NOTTE 21–09"), axis, 22);
       g.font = '10px "Geist Mono", monospace';
       g.fillStyle = "#8d8a80";
       g.fillText(
@@ -1011,7 +1011,7 @@
       g.fillRect(0, 0, w, h);
       g.fillStyle = "#1b1b19";
       g.font = "700 24px Geist, sans-serif";
-      g.fillText("Low-Freq Hunter · " + n.date, 24, 38);
+      g.fillText("Low-Freq Hunter · " + n.date + (n.period === "day" ? " · Giorno 09–21" : " · Notte 21–09"), 24, 38);
       g.font = '12px "Geist Mono", monospace';
       g.fillText(
         `CON RUMORE ${M.duration(s.noiseSeconds)}  ·  ${s.eventsCount} EVENTI  ·  PICCO ${s.peak?.toFixed(1) ?? "—"} dBFS  ·  BUCHI ${s.gapCount} / ${M.elapsed(s.gapSeconds)}`,

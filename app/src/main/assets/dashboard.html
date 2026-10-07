@@ -55,7 +55,15 @@
           aria-label="Spettro corrente da zero a 250 hertz"
         ></canvas>
       </section>
-      <section class="session-row rise" aria-label="Notte selezionata">
+      <section class="history-controls rise" aria-label="Periodo dello storico">
+        <div class="segmented">
+          <button id="periodDay" type="button" aria-pressed="true">GIORNO · 09–21</button>
+          <button id="periodNight" type="button" aria-pressed="false">NOTTE · 21–09</button>
+        </div>
+        <label for="historyDate">DATA DI INIZIO</label>
+        <input id="historyDate" type="date" aria-label="Data di inizio del periodo" />
+      </section>
+      <section class="session-row rise" aria-label="Periodo selezionato">
         <button
           id="previousNight"
           class="raised night-nav"
@@ -103,7 +111,7 @@
       </section>
       <section
         class="spectrogram-screen screen rise"
-        aria-label="Esplora lo spettrogramma della notte"
+        aria-label="Esplora lo spettrogramma del periodo selezionato"
       >
         <div class="toolbar">
           <div class="plot-title">
@@ -167,12 +175,12 @@
           Collegamento al telefono…
         </p>
         <div class="plot-grid">
-          <span class="row-label overview-cell" hidden>NOTTE</span
+          <span id="overviewLabel" class="row-label overview-cell" hidden>GIORNO</span
           ><canvas
             id="overview"
             class="overview-cell"
             hidden
-            aria-label="Panoramica della notte, trascina per scorrere"
+            aria-label="Panoramica del periodo, trascina per scorrere"
           ></canvas
           ><span id="overviewShare" class="side-label overview-cell" hidden
             >VISTA</span
@@ -209,8 +217,8 @@
         <div class="chart-help">
           <span>TRASCINA = INGRANDISCI</span><span>ROTELLA = ZOOM</span
           ><span>← → = SCORRI</span><span>CLIC = FISSA CURSORE</span
-          ><span>DOPPIO CLIC / ESC = TUTTA LA NOTTE</span
-          ><span>[ ] = NOTTE PREC./SUCC.</span>
+          ><span id="resetHelp">DOPPIO CLIC / ESC = TUTTA LA NOTTE</span
+          ><span id="periodNavHelp">[ ] = NOTTE PREC./SUCC.</span>
         </div>
         <div class="data-detail">
           STORICO 20–200 HZ · 64 INTERVALLI · MEDIE DI CIRCA 30 S · DBFS
@@ -218,10 +226,10 @@
       </section>
       <section class="bottom-row rise">
         <div class="diary screen">
-          <h2>ULTIME 15 NOTTI · C’È UNO SCHEMA?</h2>
+          <h2 id="diaryTitle">DIARIO · GIORNI 09–21</h2>
           <div class="insights">
             <div>
-              <label>NOTTI CON RUMORE</label><b id="insightNights">—</b
+              <label id="insightCountLabel">GIORNI CON RUMORE</label><b id="insightNights">—</b
               ><span id="insightNightsDetail">in attesa dei dati</span>
             </div>
             <div>
@@ -229,14 +237,14 @@
               ><span id="insightEnd">in attesa dei dati</span>
             </div>
             <div>
-              <label>MEDIA A NOTTE</label><b id="insightAverage">—</b
+              <label id="insightMeanLabel">MEDIA AL GIORNO</label><b id="insightAverage">—</b
               ><span>durata degli eventi audio</span>
             </div>
           </div>
           <div class="heatmap">
             <div class="heatmap-heading">
               <span></span>
-              <div>
+              <div id="diaryHours">
                 <span>21</span><span>00</span><span>03</span><span>06</span>
               </div>
               <span>RUMORE</span>
@@ -257,7 +265,7 @@
             ><b id="reliabilityRecording">—</b>
           </div>
           <div class="quality-row">
-            <i></i><span>Buchi stanotte</span><b id="reliabilityGaps">—</b>
+            <i></i><span id="gapsPeriodLabel">Buchi nel periodo</span><b id="reliabilityGaps">—</b>
           </div>
           <div class="quality-row">
             <i></i><span>Batteria telefono</span

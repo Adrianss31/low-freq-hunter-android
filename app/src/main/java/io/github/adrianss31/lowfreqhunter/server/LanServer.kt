@@ -88,23 +88,29 @@ class LanServer(
                 uri == "/" || uri == "/index.html" -> dashboard()
                 uri in setOf("/dashboard.css", "/dashboard-model.js", "/dashboard-render.js", "/dashboard.js", "/fonts/geist.ttf", "/fonts/geist_mono.ttf", "/fonts/doto.ttf") -> asset(uri)
                 uri == "/api/nights" -> {
-                    val date = nightDate(session.parms["anchor"])
+                    val period=DashboardPeriod.parse(session.parms["period"])
+                    val date = nightDate(session.parms["anchor"],period)
                     val count = session.parms["count"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("count non valido") } ?: 16
-                    require(count in 1..16) { "Numero di notti non valido" }
-                    json(kotlinx.serialization.json.JsonArray(nights.summaries(date, count)).toString())
+                    require(count in 1..16) { "Numero di periodi non valido" }
+                    json(kotlinx.serialization.json.JsonArray(nights.summaries(date, count,period)).toString())
                 }
-                uri == "/api/night" -> json(nights.load(nightDate(session.parms["date"])).toString())
+                uri == "/api/night" -> {
+                    val period=DashboardPeriod.parse(session.parms["period"])
+                    json(nights.load(nightDate(session.parms["date"],period),period).toString())
+                }
                 uri == "/api/night/eventi.csv" -> {
-                    val date=nightDate(session.parms["date"])
-                    download(nights.eventsCsv(date), "text/csv", "LFH_${date}_eventi.csv")
+                    val period=DashboardPeriod.parse(session.parms["period"])
+                    val date=nightDate(session.parms["date"],period)
+                    download(nights.eventsCsv(date,period), "text/csv", "LFH_${date}_${if(period==DashboardPeriod.DAY)"giorno_" else ""}eventi.csv")
                 }
                 uri == "/api/night/levels" -> {
-                    val date = nightDate(session.parms["date"])
-                    val w = NightWindow.forDate(date)
+                    val period=DashboardPeriod.parse(session.parms["period"])
+                    val date = nightDate(session.parms["date"],period)
+                    val w = NightWindow.forDate(date,period=period)
                     val from = session.parms["from"]?.let { it.toLongOrNull() ?: throw IllegalArgumentException("from non valido") } ?: w.from
                     val to = session.parms["to"]?.let { it.toLongOrNull() ?: throw IllegalArgumentException("to non valido") } ?: w.to
                     val cols = session.parms["cols"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("cols non valido") } ?: 1200
-                    json(nights.levels(date, from, to, cols).toString())
+                    json(nights.levels(date, from, to, cols,period).toString())
                 }
                 uri == "/api/state" -> json(apiState())
                 uri == "/api/spectrum" -> json(apiSpectrum())
@@ -127,8 +133,8 @@ class LanServer(
 
     // ── endpoint ────────────────────────────────────────────────────────────
 
-    private fun nightDate(raw: String?): java.time.LocalDate {
-        if (raw == null) return NightWindow.latest()
+    private fun nightDate(raw: String?,period: DashboardPeriod): java.time.LocalDate {
+        if (raw == null) return NightWindow.latest(period=period)
         return runCatching { java.time.LocalDate.parse(raw) }.getOrElse { throw IllegalArgumentException("Data non valida") }
             .also { require(it.year in 1970..2100) { "Data fuori intervallo" } }
     }
@@ -143,6 +149,7 @@ class LanServer(
             put("lastDataAt", MonitorBus.spectrum.value?.t ?: st.lastDataAt)
             put("timezone", java.util.TimeZone.getDefault().id)
             put("nightDate", NightWindow.latest().toString())
+            put("dayDate", NightWindow.latest(period=DashboardPeriod.DAY).toString())
             val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
             put("charging", status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL)
             runCatching { android.os.StatFs(ctx.filesDir.absolutePath).availableBytes }.getOrNull()?.let { put("freeBytes", it) }

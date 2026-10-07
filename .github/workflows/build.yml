@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: v1.1.0
+  RELEASE_VERSION: v1.1.1
   KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
   KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
 
