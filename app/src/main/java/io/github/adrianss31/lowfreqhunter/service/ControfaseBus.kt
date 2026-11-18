@@ -18,12 +18,14 @@ data class AudioDeviceChoice(
  * Bus e controller condiviso tra [ControfaseService] e la UI Compose.
  */
 object ControfaseBus {
-    val engine = ControfaseEngine().also { eng ->
-        eng.onSnapshot = { snap -> _snapshot.value = snap }
-    }
+    val engine: ControfaseEngine = ControfaseEngine()
 
     private val _snapshot = MutableStateFlow(engine.snapshot())
     val snapshot: StateFlow<ControfaseSnapshot> = _snapshot
+
+    init {
+        engine.onSnapshot = { snap -> _snapshot.value = snap }
+    }
 
     val error = MutableStateFlow<String?>(null)
     val inputs = MutableStateFlow<List<AudioDeviceChoice>>(emptyList())
