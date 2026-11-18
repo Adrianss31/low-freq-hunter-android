@@ -82,6 +82,7 @@ fun NavIcon(tab: Tab, on: Boolean) {
             val st = Stroke(1.6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             when (tab) {
                 Tab.MONITOR -> monitorIcon(ms, on, ink, acc, st)
+                Tab.CONTROFASE -> faseIcon(ms, on, ink, acc, st)
                 Tab.ARCHIVE -> archiveIcon(ms, on, ink, acc, st)
                 Tab.MAP -> mapIcon(ms, on, ink, acc, st)
                 Tab.SETUP -> setupIcon(ms, on, ink, acc, fill, st)
@@ -116,6 +117,25 @@ private fun DrawScope.monitorIcon(ms: Float, on: Boolean, ink: Color, acc: Color
         }
     }
     drawCircle(acc, 1.8f * sc, Offset(10.6f, 2.5f + dy))
+}
+
+private fun DrawScope.faseIcon(ms: Float, on: Boolean, ink: Color, acc: Color, st: Stroke) {
+    val draw = if (on) EaseDraw.transform(win(ms, 0f, 700f)) else 1f
+    val a = Path().apply {
+        moveTo(2f, 9f)
+        cubicTo(5.5f, 2f, 7.5f, 2f, 11f, 9f)
+        cubicTo(14.5f, 16f, 16.5f, 16f, 20f, 9f)
+    }
+    val b = Path().apply {
+        moveTo(2f, 9f)
+        cubicTo(5.5f, 16f, 7.5f, 16f, 11f, 9f)
+        cubicTo(14.5f, 2f, 16.5f, 2f, 20f, 9f)
+    }
+    drawPath(a, ink, style = st)
+    if (draw > 0.2f) {
+        drawPath(b, ink.copy(alpha = ink.alpha * 0.55f * draw), style = st)
+    }
+    drawCircle(acc, 2.0f, Offset(11f, 9f))
 }
 
 private fun DrawScope.archiveIcon(ms: Float, on: Boolean, ink: Color, acc: Color, st: Stroke) {

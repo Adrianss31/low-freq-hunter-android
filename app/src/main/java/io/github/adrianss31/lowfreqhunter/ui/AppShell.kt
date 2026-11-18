@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import io.github.adrianss31.lowfreqhunter.data.SettingsRepo
 import io.github.adrianss31.lowfreqhunter.server.LanServer
+import io.github.adrianss31.lowfreqhunter.service.ControfaseBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorService
 import io.github.adrianss31.lowfreqhunter.update.AppUpdater
@@ -88,7 +89,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class Tab(val label: String) {
-    MONITOR("MONITOR"), ARCHIVE("ARCHIVIO"), MAP("MAPPA"), SETUP("SETUP"),
+    MONITOR("MONITOR"), CONTROFASE("FASE"), ARCHIVE("ARCHIVIO"), MAP("MAPPA"), SETUP("SETUP"),
 }
 
 /** Fogli che salgono dal basso sopra la scheda corrente. */
@@ -187,6 +188,7 @@ fun AppShell(initial: Shell? = null) {
                     ) { t ->
                         when (t) {
                             Tab.MONITOR -> MonitorScreen()
+                            Tab.CONTROFASE -> ControfaseScreen()
                             Tab.ARCHIVE -> ArchiveScreen()
                             Tab.MAP -> MapScreen()
                             Tab.SETUP -> SetupScreen()
@@ -314,14 +316,14 @@ private fun Dock(modifier: Modifier) {
                 .padding(5.dp),
         ) {
             val x by animateDpAsState(
-                (shell.tab.ordinal * 64).dp,
+                (shell.tab.ordinal * 54).dp,
                 spring(dampingRatio = 0.62f, stiffness = 380f),
                 label = "thumb",
             )
             Box(
                 Modifier
                     .offset(x = x)
-                    .size(60.dp, 54.dp)
+                    .size(50.dp, 54.dp)
                     .keyFace(19.dp, Lfh.Key, edge = 0f, inset = 0.10f),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -337,7 +339,7 @@ private fun NavItem(tab: Tab, on: Boolean, onClick: () -> Unit) {
     val fg by animateColorAsState(if (on) Lfh.Ink else Lfh.Paper.copy(alpha = 0.7f), label = "navFg")
     Column(
         Modifier
-            .size(60.dp, 54.dp)
+            .size(50.dp, 54.dp)
             .press(Hap.TAP, shift = 0.dp, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -402,6 +404,10 @@ private fun toggleRec(ctx: Context, shell: Shell, restartLater: () -> Unit) {
     }
     if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
         shell.toast("Serve il permesso del microfono: concedilo dalle impostazioni dell'app.")
+        return
+    }
+    if (ControfaseBus.snapshot.value.running && !ControfaseBus.snapshot.value.simMode) {
+        shell.toast("Ferma prima Controfase nella scheda FASE.")
         return
     }
     if (st.running) {

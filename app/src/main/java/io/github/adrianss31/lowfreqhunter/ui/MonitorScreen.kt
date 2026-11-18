@@ -77,6 +77,7 @@ import io.github.adrianss31.lowfreqhunter.dsp.MovingMedian
 import io.github.adrianss31.lowfreqhunter.engine.BandCfg
 import io.github.adrianss31.lowfreqhunter.engine.Channels
 import io.github.adrianss31.lowfreqhunter.engine.NightEngine
+import io.github.adrianss31.lowfreqhunter.service.ControfaseBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorBus
 import io.github.adrianss31.lowfreqhunter.service.MonitorService
 import io.github.adrianss31.lowfreqhunter.ui.Render.monoText
@@ -172,10 +173,14 @@ fun MonitorScreen() {
     }
 
     val fft = settings.engine.fftSize
-    LaunchedEffect(bus.running, resumed, fft, loaded != null) {
+    val contSnap by ControfaseBus.snapshot.collectAsState()
+    val contUsingMic = contSnap.running && !contSnap.simMode
+    LaunchedEffect(bus.running, contUsingMic, resumed, fft, loaded != null) {
         if (bus.running) {
             micError = false
             MonitorBus.spectrum.collect { f -> if (f != null) onFrame(f) }
+        } else if (contUsingMic) {
+            micError = false
         } else if (resumed && loaded != null) {
             val flow = MutableStateFlow<MonitorBus.SpectrumFrame?>(null)
             val cap = CaptureEngine(ctx, fft, settings.engine.smoothLive)
@@ -221,6 +226,7 @@ fun MonitorScreen() {
                 val stateTxt = when {
                     rec -> (if (blink) "● " else "○ ") + "REC " + fmtDur((now - bus.startedAt) / 1000).uppercase()
                     bus.running -> "SOLO ASCOLTO · WIDGET"
+                    contUsingMic -> "IN USO DA CONTROFASE"
                     micError -> "MICROFONO NON DISPONIBILE"
                     else -> "STANDBY · ASCOLTO LIVE"
                 }

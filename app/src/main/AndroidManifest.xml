@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -47,6 +48,11 @@
             android:name=".service.MonitorService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <service
+            android:name=".service.ControfaseService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback" />
 
         <service
             android:name=".service.LanDashboardService"
