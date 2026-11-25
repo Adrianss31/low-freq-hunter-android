@@ -100,7 +100,8 @@ data class ControfaseSnapshot(
  * - gate anti-rumore a banda larga (tastiera, voce, urti) tramite stima asimmetrica quietN2;
  * - acquisizione separata FLL → PLL conservativo;
  * - calibrazione coerente con compensazione rotazione blocco-blocco;
- * - aggiornamento continuo di S (fase libera, ampiezza ±6 dB) e inseguimento lento di W;
+ * - cadenza assestata a 0,5 s con sonda pilota in quadratura (≤5%) e differenza seconda NLMS
+ *   per aggiornamento continuo di S (fase libera, ampiezza ±6 dB) e inseguimento lento di W;
  * - scansione spettro 20–500 Hz senza aggiunta automatica dei toni (scelta manuale utente).
  */
 class ControfaseEngine(
@@ -110,17 +111,21 @@ class ControfaseEngine(
     companion object {
         const val PROBE_HZ = 8.0
         const val T_BLOCK = 0.25
+        const val T_CTRL = 2.0 * T_BLOCK
         const val MAX_CH = 6
         const val MIN_SPACING = 6.0
-        const val K_CAP = 0.3
-        const val K_MIN = 0.02
-        const val K_HOLD_BASE = 0.008
-        const val K_HOLD_SPAN = 0.014
-        const val MAX_TOTAL_AMP = 0.95
+        const val K_CAP = 0.35
+        const val K_MIN = 0.025
+        const val K_HOLD_BASE = 0.016
+        const val K_HOLD_SPAN = 0.028
+        const val MAX_TOTAL_AMP = 0.90
         const val DEPTH = 1e-3
         const val CAL_SETTLE = 2
         const val CAL_MEASURE = 8
+        private const val TWO_PI = 2.0 * PI
     }
+
+    private data class ProbeSample(val t: Double, val ph: Double, val m: Cx, val u: Cx)
 
     private class Osc(freq: Double, private val fs: Double) {
         var c = 1.0
@@ -183,6 +188,9 @@ class ControfaseEngine(
         var pI = 0.0
         var mR = 0.0
         var mI = 0.0
+        var ph = 0.0
+        var cyc: Long = 0L
+        var phMid = 0.0
 
         // Stato blocco (0.25 s)
         var sigma2: Double? = null
@@ -193,8 +201,12 @@ class ControfaseEngine(
         var noisyStreak = 0
         var levelDb: Double? = null
         var lastM = Cx.ZERO
-        var kPrev = 0.0
-        var mPrev: Cx? = null
+        var weff = Cx.ZERO
+        var weffPrev = Cx.ZERO
+        var ctrlTick = 0
+        var pilotSign = 1.0
+        var pilotW = Cx.ZERO
+        val probeHist = ArrayList<ProbeSample>(4)
         var prevDh: Cx? = null
         var phRef: Double? = null
         var pllGrace = 0
@@ -203,7 +215,7 @@ class ControfaseEngine(
         var rs: Double? = null
         var best: Double? = null
         var stable = 0
-        val resid = ArrayList<Double>(164)
+        val resid = ArrayList<Double>(84)
         var lockRef: Double? = null
         var divergeN = 0
         var limitN = 0
@@ -232,9 +244,11 @@ class ControfaseEngine(
     private class SimEnv(fs: Double) {
         val gain = 0.6
         var noise = 10.0.pow(-62.0 / 20.0)
-        val delaySamples = max(1, (0.031 * fs).roundToInt())
-        val buf = DoubleArray(delaySamples + 1)
-        var pos = 0
+        val bufSize = 65536
+        val buf = DoubleArray(bufSize)
+        var wrPos = 0
+        var delaySamples = max(1.0, 0.031 * fs)
+        var clockSkewPpm = 0.0
         val dists = listOf(
             SimDist(100.037, 100.037, 10.0.pow(-34.0 / 20.0), 1.1, 0.0005),
             SimDist(64.21, 64.21, 10.0.pow(-40.0 / 20.0), 0.3, 0.0005),
@@ -250,16 +264,21 @@ class ControfaseEngine(
 
         fun quantum(n: Int, fs: Double) {
             val dt = n.toDouble() / fs
+            delaySamples = (delaySamples + clockSkewPpm * 1e-6 * fs * dt)
+                .coerceIn(1.0, (bufSize - 4).toDouble())
             for (d in dists) {
                 d.f += -0.02 * (d.f - d.f0) * dt + d.wander * sqrt(dt) * gauss()
             }
         }
 
         fun sample(y: Double, fs: Double): Double {
-            buf[pos] = y
-            val rd = (pos + 1) % buf.size
-            val yd = buf[rd]
-            pos = rd
+            var rd = wrPos - delaySamples
+            while (rd < 0.0) rd += bufSize
+            val i0 = rd.toInt() % bufSize
+            val frac = rd - floor(rd)
+            val yd = buf[i0] * (1.0 - frac) + buf[(i0 + 1) % bufSize] * frac
+            buf[wrPos] = y
+            wrPos = (wrPos + 1) % bufSize
             var x = gain * yd
             for (d in dists) {
                 d.ph += 2.0 * PI * d.f / fs
@@ -274,6 +293,7 @@ class ControfaseEngine(
     private val lock = Any()
     private val fs = sampleRate.toDouble()
     private val blockLen = (sampleRate * T_BLOCK).roundToInt()
+    private val halfBlock = blockLen / 2
     private val win = DoubleArray(blockLen) { i -> 0.5 - 0.5 * cos(2.0 * PI * i / blockLen) }
     private val winSum = win.sum()
     private val smooth = 1.0 - exp(-1.0 / (0.05 * fs))
@@ -286,6 +306,8 @@ class ControfaseEngine(
 
     private var idx = 0
     private var accSq = 0.0
+    private var sampleCount: Long = 0L
+    private var tMid = 0.0
     private var nextId = 1
 
     private val channels = ArrayList<Channel>()
@@ -347,6 +369,9 @@ class ControfaseEngine(
             outputOn = false
             for (ch in channels) {
                 ch.calW = null
+                ch.pilotW = Cx.ZERO
+                ch.probeHist.clear()
+                ch.ctrlTick = 0
                 if (ch.state == TonePhaseState.CALIBRATING || ch.state == TonePhaseState.ADAPTING || ch.state == TonePhaseState.LOCKED) {
                     ch.state = if (ch.sPath != null) TonePhaseState.READY else TonePhaseState.NEW
                 }
@@ -378,6 +403,20 @@ class ControfaseEngine(
         simEnv.noise = undb(noiseDb)
     }
 
+    fun setSimPath(delayMs: Double? = null, clockSkewPpm: Double? = null) = synchronized(lock) {
+        if (delayMs != null) {
+            simEnv.delaySamples = (delayMs * 0.001 * fs).coerceIn(1.0, (simEnv.bufSize - 4).toDouble())
+        }
+        if (clockSkewPpm != null) {
+            simEnv.clockSkewPpm = clockSkewPpm
+        }
+    }
+
+    fun shiftSimDelayMs(deltaMs: Double) = synchronized(lock) {
+        simEnv.delaySamples = (simEnv.delaySamples + deltaMs * 0.001 * fs)
+            .coerceIn(1.0, (simEnv.bufSize - 4).toDouble())
+    }
+
     fun resetAudioBuffers() = synchronized(lock) {
         idx = 0
         accSq = 0.0
@@ -390,6 +429,8 @@ class ControfaseEngine(
             ch.aR = 0.0; ch.aI = 0.0
             ch.pR = 0.0; ch.pI = 0.0
             ch.mR = 0.0; ch.mI = 0.0
+            ch.probeHist.clear()
+            ch.ctrlTick = 0
         }
     }
 
@@ -427,6 +468,9 @@ class ControfaseEngine(
         val ch = channels.firstOrNull { it.id == id } ?: return
         ch.enabled = enabled
         if (!enabled) {
+            ch.pilotW = Cx.ZERO
+            ch.probeHist.clear()
+            ch.ctrlTick = 0
             if (ch.state != TonePhaseState.NEW) ch.state = if (ch.sPath != null) TonePhaseState.READY else TonePhaseState.NEW
         } else if (autoOn && ch.sPath != null) {
             startAdaptingLocked(ch)
@@ -455,6 +499,8 @@ class ControfaseEngine(
         val ch = channels.firstOrNull { it.id == id } ?: return
         val amp = undb(ampDb.coerceIn(-60.0, 0.0)).coerceAtMost(maxAmpLin())
         val rad = phaseDeg * PI / 180.0
+        ch.pilotW = Cx.ZERO
+        ch.probeHist.clear()
         ch.w = clampWLocked(ch, Cx.polar(amp, rad))
         syncChannelTarget(ch)
         emitSnapshotLocked()
@@ -601,6 +647,8 @@ class ControfaseEngine(
 
                 val wVal = win[idx]
                 val wx = x * wVal
+                val mid = idx == halfBlock
+                if (mid) tMid = sampleCount.toDouble() / fs
                 accSq += x * x
                 for (k in 0 until channels.size) {
                     val ch = channels[k]
@@ -610,10 +658,17 @@ class ControfaseEngine(
                     ch.pI -= wx * ch.op.s
                     ch.mR += wx * ch.om.c
                     ch.mI -= wx * ch.om.s
+                    if (mid) ch.phMid = ch.cyc.toDouble() * TWO_PI + ch.ph
+                    ch.ph += ch.o.w
+                    if (ch.ph >= TWO_PI) {
+                        ch.ph -= TWO_PI
+                        ch.cyc++
+                    }
                     ch.o.step()
                     ch.op.step()
                     ch.om.step()
                 }
+                sampleCount++
                 if (++idx >= blockLen) {
                     flushBlockLocked()
                 }
@@ -700,7 +755,9 @@ class ControfaseEngine(
             ch.prevBurst = softBurst
             val sRef = max(ch.sigma2 ?: 0.0, qFloor)
             val m2 = M.mag2()
-            ch.noisy = calSeq == null && (burst || (m2 > 3.0 * sRef && m2 < 3.5 * max(n2, 1e-16)))
+            // Un picco a banda stretta (tono che diverge) non è rumore esterno a banda larga
+            val isNarrowband = m2 > 16.0 * max(n2, 1e-16)
+            ch.noisy = calSeq == null && !isNarrowband && (burst || (n2 > 2.2 * qFloor && m2 > 3.0 * sRef && m2 < 3.5 * max(n2, 1e-16)))
             ch.noisyStreak = if (ch.noisy) ch.noisyStreak + 1 else 0
 
             if (!ch.noisy) {
@@ -711,6 +768,8 @@ class ControfaseEngine(
                 ch.levelDb = if (l0 == null) lvl else l0 + 0.3 * (lvl - l0)
             }
             ch.lastM = M
+            ch.weffPrev = ch.weff
+            ch.weff = effectiveW(ch)
         }
 
         val cal = calSeq
@@ -737,26 +796,86 @@ class ControfaseEngine(
     private fun stepChannelLocked(ch: Channel) {
         val M = ch.lastM
         val s2 = max(ch.sigma2 ?: 0.0, 1e-16)
-        val weff = effectiveW(ch)
+        val weff = ch.weff
         val known = ch.sPath != null
         val silent = weff.mag2() == 0.0
+        val activeCtrl = autoOn && known && ch.enabled &&
+            (ch.state == TonePhaseState.ADAPTING || ch.state == TonePhaseState.LOCKED)
 
+        var isSettle = false
+        if (activeCtrl) {
+            if (ch.noisy) {
+                ch.probeHist.clear()
+                if (ch.divergeN > 0) ch.divergeN--
+                if (abs(ch.freq - ch.fint) > 1e-9) retuneChannel(ch, ch.fint)
+                return
+            }
+            ch.ctrlTick = (ch.ctrlTick + 1) and 1
+            isSettle = ch.ctrlTick == 1
+        }
+
+        // 1. Tracciamento continuo di S sui blocchi assestati tramite differenza seconda NLMS in frame uniforme
+        if (activeCtrl && !isSettle) {
+            if (ch.probeHist.isNotEmpty() && abs(tMid - ch.probeHist.last().t - T_CTRL) > 0.15) {
+                ch.probeHist.clear()
+            }
+            ch.probeHist.add(ProbeSample(tMid, ch.phMid, M, weff))
+            if (ch.probeHist.size > 3) ch.probeHist.removeAt(0)
+            if (ch.probeHist.size == 3 && ch.phRef != null) {
+                val h0 = ch.probeHist[0]
+                val h1 = ch.probeHist[1]
+                val h2 = ch.probeHist[2]
+                val dt02 = h2.t - h0.t
+                val frac = if (dt02 > 0.0) (h1.t - h0.t) / dt02 else 0.5
+                val dPh = wrapPi(h1.ph - (h0.ph + frac * (h2.ph - h0.ph)))
+                val rot = Cx.polar(1.0, dPh)
+                val dM = (h0.m * (1.0 - frac) + h2.m * frac) - (h1.m * rot)
+                val dU = (h0.u * (1.0 - frac) + h2.u * frac) - (h1.u * rot)
+                val dU2 = dU.mag2()
+                val sCur = ch.sPath!!
+                val sMag2 = max(sCur.mag2(), 1e-12)
+                val sigPow = dU2 * sMag2
+                val nEff = max(s2, 0.25 * (ch.rs ?: 0.0))
+                if (sigPow > 0.35 * nEff && abs(dPh) < 0.35) {
+                    val eS = dM - (sCur * dU)
+                    if (eS.mag2() < 16.0 * sigPow + 36.0 * nEff) {
+                        val mu = if (ch.state == TonePhaseState.ADAPTING) 0.20 else 0.10
+                        val reg = 2.5 * nEff / sMag2
+                        val sNew = sCur + (eS * dU.conj()) * (mu / (dU2 + reg))
+                        val mNew = sNew.mag()
+                        val mCal = max((ch.sCal ?: sCur).mag(), 1e-9)
+                        if (mNew > 1e-12) {
+                            // Limita SOLO il modulo entro ±6 dB da Scal, senza mai bloccare la rotazione di fase
+                            ch.sPath = sNew * (mNew.coerceIn(mCal * 0.5, mCal * 2.0) / mNew)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Stima del disturbo e PLL a 0,25 s con guardia su blocco di assestamento e su disallineamento di S
+        val uJumpBig = isSettle && (weff - ch.weffPrev).mag() > 0.08 * max(ch.w.mag(), 1e-6)
+        val wPll = if (isSettle) (ch.weffPrev + weff) * 0.5 else weff
         val dh: Cx? = when {
             silent -> M
-            known -> M - (ch.sPath!! * weff)
+            known -> M - (ch.sPath!! * wPll)
             else -> null
         }
 
         val basePow0 = ch.baselineDb?.let { 10.0.pow(it / 10.0) } ?: 0.0
         val instN = max(ch.lastN2, max(s2, 1e-16))
-        if (dh != null && !ch.noisy && dh.mag2() > max(4.0 * instN, 0.01 * basePow0) && ch.enabled) {
-            val snr = db2(dh.mag2() / s2)
+        val dhOk = dh != null && !ch.noisy && !uJumpBig &&
+            dh.mag2() > max(4.0 * instN, 0.01 * basePow0) &&
+            (basePow0 == 0.0 || dh.mag2() < 6.0 * basePow0) &&
+            ch.enabled
+        if (dhOk) {
+            val snr = db2(dh!!.mag2() / s2)
             ch.snrDb = ch.snrDb?.let { it + 0.1 * (snr - it) } ?: snr
             if (!known && ch.phRef == null) {
                 val prev = ch.prevDh
                 if (prev != null && prev.mag2() > 4.0 * s2) {
                     val dphi = (dh * prev.conj()).ang()
-                    ch.fint = (ch.fint + 0.4 * dphi / (2.0 * PI * T_BLOCK))
+                    ch.fint = (ch.fint + 0.4 * dphi / (TWO_PI * T_BLOCK))
                         .coerceIn(ch.calFreq - 4.0, ch.calFreq + 4.0)
                     ch.acqOk = if (abs(dphi) < 0.12) ch.acqOk + 1 else 0
                     if (ch.acqOk >= 2) ch.phRef = dh.ang()
@@ -767,9 +886,9 @@ class ControfaseEngine(
                 val e = (dh * Cx.polar(1.0, -ch.phRef!!)).ang()
                 val kp = (0.10 + 0.20 * ((ch.snrDb ?: 10.0) - 10.0) / 20.0).coerceIn(0.10, 0.30)
                 val ki = if (ch.pllGrace > 0) 0.0 else kp * kp / 4.0
-                ch.fint = (ch.fint + ki * e / (2.0 * PI * T_BLOCK))
+                ch.fint = (ch.fint + ki * e / (TWO_PI * T_BLOCK))
                     .coerceIn(ch.calFreq - 4.0, ch.calFreq + 4.0)
-                retuneChannel(ch, ch.fint + kp * e / (2.0 * PI * T_BLOCK))
+                retuneChannel(ch, ch.fint + kp * e / (TWO_PI * T_BLOCK))
             }
         } else if (abs(ch.freq - ch.fint) > 1e-9) {
             retuneChannel(ch, ch.fint)
@@ -777,87 +896,81 @@ class ControfaseEngine(
         ch.prevDh = dh
         if (ch.pllGrace > 0) ch.pllGrace--
 
-        if (!autoOn || !known || !ch.enabled) {
-            ch.mPrev = null
-            return
-        }
-        if (ch.state != TonePhaseState.ADAPTING && ch.state != TonePhaseState.LOCKED) return
-
-        if (ch.noisy) {
-            ch.mPrev = null
-            ch.kPrev = 0.0
-            if (ch.divergeN > 0) ch.divergeN--
+        if (!activeCtrl || isSettle) {
+            if (!activeCtrl) ch.probeHist.clear()
             return
         }
 
-        val m2 = M.mag2()
-        ch.resid.add(m2)
-        if (ch.resid.size > 160) ch.resid.removeAt(0)
+        // 3. Residuo pulito (sottratta la sonda pilota) e aggiornamento W
+        val mc = M - (ch.sPath!! * ch.pilotW)
+        val mc2 = mc.mag2()
+        ch.resid.add(mc2)
+        if (ch.resid.size > 80) ch.resid.removeAt(0)
 
-        ch.rs = ch.rs?.let { it + 0.25 * (m2 - it) } ?: m2
-        ch.best = ch.best?.let { min(it * 1.0005, ch.rs!!) } ?: ch.rs
+        ch.rs = ch.rs?.let { it + 0.35 * (mc2 - it) } ?: mc2
+        ch.best = ch.best?.let { min(it * 1.001, ch.rs!!) } ?: ch.rs
         val basePow = ch.baselineDb?.let { 10.0.pow(it / 10.0) } ?: 0.0
         val floor = max(ch.best!!, max(2.0 * s2, basePow * DEPTH))
 
-        // Correzione continua di S: fase libera (assorbe clock drift), ampiezza ±6 dB da Scal
-        val mPrev = ch.mPrev
-        val sCur = ch.sPath!!
-        val sCal = ch.sCal ?: sCur
-        if (mPrev != null && ch.kPrev >= K_MIN && (ch.kPrev * ch.kPrev * mPrev.mag2()) > 16.0 * s2) {
-            val g = (Cx(1.0, 0.0) - (M / mPrev)) * (1.0 / ch.kPrev)
-            if ((g - Cx(1.0, 0.0)).mag() < 0.85) {
-                val sNew = sCur * (Cx(1.0, 0.0) + (g - Cx(1.0, 0.0)) * 0.25)
-                val magRel = db(sNew.mag() / max(sCal.mag(), 1e-9))
-                if (abs(magRel) < 6.0) ch.sPath = sNew
-            }
+        fun nextPilot(): Cx {
+            ch.pilotSign = -ch.pilotSign
+            val wMag = ch.w.mag()
+            val sMag = max(ch.sPath!!.mag(), 1e-9)
+            if (wMag < 1e-6) return Cx.ZERO
+            val nEff = max(s2, 0.25 * (ch.rs ?: 0.0))
+            val targetMic = (if (ch.state == TonePhaseState.ADAPTING || mc2 > 4.0 * s2) 1.8 else 1.1) * sqrt(nEff)
+            val eps = (targetMic / (wMag * sMag)).coerceIn(0.012, 0.05)
+            return Cx(-ch.pilotSign * eps * ch.w.im, ch.pilotSign * eps * ch.w.re)
         }
 
         if (ch.state == TonePhaseState.LOCKED) {
-            if (ch.pllGrace > 0) return
-            val recent = if (ch.resid.size >= 8) ch.resid.takeLast(8).average() else ch.resid.average()
+            if (ch.pllGrace > 0) {
+                ch.pilotW = nextPilot()
+                syncChannelTarget(ch)
+                return
+            }
+            val recent = if (ch.resid.size >= 4) ch.resid.takeLast(4).average() else ch.resid.average()
             if (recent > 2.5 * max(ch.lockRef ?: 0.0, max(2.0 * s2, basePow * DEPTH))) {
                 ch.state = TonePhaseState.ADAPTING
                 ch.kGain = K_CAP
                 ch.stable = 0
-                ch.mPrev = null
-                ch.kPrev = 0.0
                 ch.divergeN = 0
                 ch.rs = recent
                 ch.best = min(ch.best ?: recent, ch.lockRef ?: recent)
+                ch.pilotW = nextPilot()
+                syncChannelTarget(ch)
                 message = "Tono %.2f Hz: il ronzio è cambiato, riaggancio.".format(ch.freq)
                 return
             }
             val kBase = K_HOLD_BASE + K_HOLD_SPAN * (react / 100.0)
             val excess = ((ch.rs!! - s2) / max(ch.rs!!, max(s2, 1e-18))).coerceIn(0.15, 1.0)
             val k = kBase * excess
-            val wNext = clampWLocked(ch, ch.w - ((M / ch.sPath!!) * k))
-            ch.w = wNext
-            ch.mPrev = M
-            ch.kPrev = k
+            ch.w = clampWLocked(ch, ch.w - ((mc / ch.sPath!!) * k))
+            ch.pilotW = nextPilot()
             syncChannelTarget(ch)
             return
         }
 
-        ch.kGain = if (ch.rs!! > 4.0 * floor) K_CAP else max(K_MIN, ch.kGain * 0.95)
+        ch.kGain = if (ch.rs!! > 4.0 * floor) K_CAP else max(K_MIN, ch.kGain * 0.90)
         val k = ch.kGain
-        val wNext = clampWLocked(ch, ch.w - ((M / ch.sPath!!) * k))
-        ch.w = wNext
-        ch.mPrev = M
-        ch.kPrev = k
+        ch.w = clampWLocked(ch, ch.w - ((mc / ch.sPath!!) * k))
+        ch.pilotW = nextPilot()
         syncChannelTarget(ch)
 
         ch.stable = if (k <= K_MIN * 1.01 && ch.rs!! <= 2.5 * floor) ch.stable + 1 else 0
-        if (ch.stable >= (24.0 * reactFactor()).roundToInt()) {
+        if (ch.stable >= (12.0 * reactFactor()).roundToInt()) {
             ch.state = TonePhaseState.LOCKED
             ch.lockRef = max(ch.rs!!, ch.best!!)
-            ch.kPrev = 0.0
         }
 
         val lvl = ch.levelDb
         val bDb = ch.baselineDb
         ch.divergeN = if (bDb != null && lvl != null && lvl > bDb + 6.0) ch.divergeN + 1 else 0
-        if (ch.divergeN > 32) {
+        if (ch.divergeN > 16) {
             ch.w = Cx.ZERO
+            ch.pilotW = Cx.ZERO
+            ch.probeHist.clear()
+            ch.ctrlTick = 0
             ch.state = TonePhaseState.FAILED
             ch.divergeN = 0
             syncChannelTarget(ch)
@@ -880,6 +993,9 @@ class ControfaseEngine(
         ch.phRef = null
         ch.prevDh = null
         ch.acqOk = 0
+        ch.pilotW = Cx.ZERO
+        ch.probeHist.clear()
+        ch.ctrlTick = 0
         ch.fint = ch.calFreq
         ch.state = TonePhaseState.NEW
         retuneChannel(ch, ch.calFreq)
@@ -903,6 +1019,9 @@ class ControfaseEngine(
         for (ch in chs) {
             ch.state = TonePhaseState.CALIBRATING
             ch.calW = Cx.ZERO
+            ch.pilotW = Cx.ZERO
+            ch.probeHist.clear()
+            ch.ctrlTick = 0
             retuneChannel(ch, ch.fint)
             syncChannelTarget(ch)
         }
@@ -983,6 +1102,9 @@ class ControfaseEngine(
             ch.phRef = null
             ch.prevDh = null
             ch.acqOk = 0
+            ch.pilotW = Cx.ZERO
+            ch.probeHist.clear()
+            ch.ctrlTick = 0
             ch.state = TonePhaseState.READY
             syncChannelTarget(ch)
         }
@@ -1000,8 +1122,10 @@ class ControfaseEngine(
         ch.state = TonePhaseState.ADAPTING
         ch.stable = 0
         ch.resid.clear()
-        ch.mPrev = null
-        ch.kPrev = 0.0
+        ch.ctrlTick = 0
+        ch.pilotSign = 1.0
+        ch.pilotW = Cx.ZERO
+        ch.probeHist.clear()
         ch.divergeN = 0
         ch.kGain = K_CAP
         ch.rs = null
@@ -1024,9 +1148,13 @@ class ControfaseEngine(
         } else {
             autoOn = false
             for (ch in channels) {
+                ch.pilotW = Cx.ZERO
+                ch.probeHist.clear()
+                ch.ctrlTick = 0
                 if (ch.state == TonePhaseState.ADAPTING || ch.state == TonePhaseState.LOCKED) {
                     ch.state = if (ch.sPath != null) TonePhaseState.READY else TonePhaseState.NEW
                 }
+                syncChannelTarget(ch)
             }
         }
     }
@@ -1040,7 +1168,7 @@ class ControfaseEngine(
     private fun effectiveW(ch: Channel): Cx {
         ch.calW?.let { return it }
         if (!outputOn || !ch.enabled) return Cx.ZERO
-        return ch.w
+        return if (ch.pilotW.mag2() > 0.0) ch.w + ch.pilotW else ch.w
     }
 
     private fun syncChannelTarget(ch: Channel) {
@@ -1182,6 +1310,7 @@ class ControfaseEngine(
         onSnapshot?.invoke(buildSnapshotLocked())
     }
 
+    private fun wrapPi(x: Double) = x - TWO_PI * round(x / TWO_PI)
     private fun db(x: Double) = 20.0 * log10(max(x, 1e-9))
     private fun db2(p: Double) = 10.0 * log10(max(p, 1e-18))
     private fun undb(d: Double) = 10.0.pow(d / 20.0)

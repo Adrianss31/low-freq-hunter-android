@@ -94,4 +94,42 @@ class ControfaseEngineTest {
         val peak = out.maxOf { abs(it) }
         assertTrue("uscita protetta dal clipping: peak=$peak", peak <= 0.99f)
     }
+
+    @Test
+    fun resisteADerivaClockEAltaLatenza() {
+        val engine = ControfaseEngine()
+        engine.setParams(simMode = true)
+        engine.setSimPath(delayMs = 150.0, clockSkewPpm = 30.0)
+        engine.setRunning(true, "SIMULAZIONE")
+        engine.addChannel(100.2)
+        engine.startSelected()
+
+        // 6 minuti con skew di 30 ppm (~390° di rotazione completa di S) e 150 ms di latenza
+        runSeconds(engine, 360.0)
+
+        val ch = engine.snapshot().channels.single()
+        assertTrue("cancellazione attiva senza bloccarsi: state=${ch.state}", ch.state != TonePhaseState.FAILED)
+        val red = ch.reductionDb ?: 0.0
+        assertTrue("riduzione attesa > 20 dB nonostante deriva clock, ottenuta $red", red > 20.0)
+    }
+
+    @Test
+    fun recuperaDaSaltoDiFaseImprovviso() {
+        val engine = ControfaseEngine()
+        engine.setParams(simMode = true)
+        engine.setSimPath(delayMs = 120.0, clockSkewPpm = 0.0)
+        engine.setRunning(true, "SIMULAZIONE")
+        engine.addChannel(100.2)
+        engine.startSelected()
+        runSeconds(engine, 55.0)
+        assertEquals(TonePhaseState.LOCKED, engine.snapshot().channels.single().state)
+
+        // Salto di fase improvviso di ~140° a 100 Hz (3,9 ms) -> ricalibrazione automatica e recupero
+        engine.shiftSimDelayMs(3.9)
+        runSeconds(engine, 60.0)
+
+        val ch = engine.snapshot().channels.single()
+        val red = ch.reductionDb ?: 0.0
+        assertTrue("riduzione attesa > 25 dB dopo recupero, ottenuta $red", red > 25.0)
+    }
 }
